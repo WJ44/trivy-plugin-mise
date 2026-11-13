@@ -23,5 +23,6 @@ instructions on when and how to record or supersede a decision, see
 
 ## Project Decisions
 
-| ID  | Title | Status | Finality | Date |
-| --- | ----- | ------ | -------- | ---- |
+| ID                                      | Title                                          | Status | Finality | Date       |
+| --------------------------------------- | ---------------------------------------------- | ------ | -------- | ---------- |
+| [001](001-language-and-distribution.md) | Implementation language and distribution model | Active | Standard | 2026-11-13 |

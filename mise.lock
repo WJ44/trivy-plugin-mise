@@ -141,6 +141,11 @@ url = "https://github.com/astral-sh/ruff/releases/download/0.17.4/ruff-x86_64-pc
 url_api = "https://api.github.com/repos/astral-sh/ruff/releases/assets/714447463"
 provenance = "github-attestations"
 
+[[tools.rust]]
+version = "1.100.0"
+backend = "core:rust"
+specifiers = ["1.100.0"]
+
 [[tools.shellcheck]]
 version = "0.11.0"
 backend = "aqua:koalaman/shellcheck"
