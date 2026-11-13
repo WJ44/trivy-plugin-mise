@@ -14,6 +14,16 @@ generation and vulnerability scanning.
   `trivy plugin install github.com/WJ44/trivy-plugin-mise` (`trivy mise ...`)
   and direct installation via `mise` (`github:WJ44/trivy-plugin-mise`).
 
+## CLI Usage
+
+```bash
+cargo run -- --help
+cargo run -- --version
+cargo run -- sbom --help
+cargo run -- scan --help
+cargo test
+```
+
 ## Development Setup
 
 This repository uses an agentic coding harness designed to run inside a
