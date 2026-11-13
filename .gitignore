@@ -5,3 +5,4 @@ host/.agent-identity.local
 __pycache__/
 *.pyc
 sbom.cdx.json
+/target
