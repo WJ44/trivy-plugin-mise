@@ -1,0 +1,52 @@
+[
+  {
+    "name": "approved",
+    "color": "10b981",
+    "description": "Approved by a human and ready for agent implementation"
+  },
+  {
+    "name": "blocked",
+    "color": "f59e0b",
+    "description": "Blocked by an external dependency, prerequisite issue, or decision"
+  },
+  {
+    "name": "bug",
+    "color": "e11d48",
+    "description": "Unexpected defect, broken behavior, or regression"
+  },
+  {
+    "name": "chore",
+    "color": "64748b",
+    "description": "Maintenance, dependencies, tooling, or harness upkeep"
+  },
+  {
+    "name": "decision",
+    "color": "6366f1",
+    "description": "Design choice, trade-off evaluation, or decision record"
+  },
+  {
+    "name": "documentation",
+    "color": "0ea5e9",
+    "description": "Documentation or agent-context updates"
+  },
+  {
+    "name": "enhancement",
+    "color": "0284c7",
+    "description": "New feature, capability, or improvement"
+  },
+  {
+    "name": "needs-refinement",
+    "color": "eab308",
+    "description": "Needs human input, design clarification, or acceptance criteria refinement"
+  },
+  {
+    "name": "proposal",
+    "color": "8b5cf6",
+    "description": "Autonomous agent proposal awaiting human review"
+  },
+  {
+    "name": "security",
+    "color": "b91c1c",
+    "description": "Security vulnerability, credential handling, or sandbox boundary"
+  }
+]

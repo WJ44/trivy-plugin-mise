@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Wrapper around /usr/bin/gh that authenticates as the configured GitHub App bot
+# using short-lived installation tokens from the Huddle socket.
+#
+# setup-user.sh places shim/ on PATH container-wide so both `gh` commands and
+# git's `!gh auth git-credential` helper automatically use the bot token.
+set -euo pipefail
+
+SOCKET="/var/run/huddle/agent-token.sock"
+CACHE="${XDG_RUNTIME_DIR:-/tmp}/agent-token-$(id -u)"
+REFRESH=600 # refresh if less than 10 minutes remain
+
+token=""
+now=$(date +%s)
+
+if [[ -r $CACHE ]]; then
+  IFS=$'\t' read -r expires cached_token <"$CACHE" || true
+  if [[ -n ${cached_token:-} && ${expires:-} =~ ^[0-9]+$ && $expires -gt $((now + REFRESH)) ]]; then
+    token="$cached_token"
+  fi
+fi
+
+if [[ -z $token && -S $SOCKET ]]; then
+  if response=$(curl -fsS --max-time 5 --unix-socket "$SOCKET" http://localhost/token 2>/dev/null); then
+    if parsed=$(jq -er 'select(.token and .expires_at) | "\(.token)\t\(.expires_at | tonumber | floor)"' <<<"$response" 2>/dev/null); then
+      token=${parsed%%$'\t'*}
+      expires=${parsed#*$'\t'}
+      if [[ -n $token && $expires =~ ^[0-9]+$ ]]; then
+        umask 077
+        printf '%s\t%s\n' "$expires" "$token" >"$CACHE.$$"
+        mv "$CACHE.$$" "$CACHE"
+      fi
+    fi
+  fi
+fi
+
+if [[ -z $token ]]; then
+  echo "gh: unable to reach the agent token socket at $SOCKET." >&2
+  echo "Start host/agent-token-server.py on the host with --socket /tmp/dc-sockets/<container-name>/agent-token.sock." >&2
+  exit 1
+fi
+
+exec env GH_TOKEN="$token" GH_HOST=github.com /usr/bin/gh "$@"

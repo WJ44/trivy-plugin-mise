@@ -1,0 +1,86 @@
+# Formatting and linting. See agent-context/harness/formatting-and-linting.md.
+#
+#   lefthook run format          fix formatting on all files
+#   lefthook run format-check    check formatting on all files, write nothing
+#   lefthook run lint            fix lint issues on all files (where supported)
+#   lefthook run lint-check      check lint issues on all files, write nothing
+#
+# Add --file <path> (repeatable) to any command to limit it to specific files.
+#
+# Every tool gets every file and picks out the ones it handles: Prettier skips unknown
+# files (--ignore-unknown), shfmt --find keeps shell files (by extension or shebang).
+# Tools that can't pick out their own files get a glob (tombi, ruff).
+#
+# Commands with pipes start with set -o pipefail, so failures aren't hidden.
+
+# Git hooks source this first, so the tools in mise.toml are on PATH.
+rc: ./.lefthookrc
+
+pre-commit:
+  jobs:
+    # Runs the format jobs on the staged files, so each tool is only listed below.
+    # printf: the file list goes over stdin, one NUL-terminated path per file.
+    - name: format
+      run: |
+        printf '%s\0' {staged_files} |
+          lefthook run format --no-auto-install --files-from-stdin
+      stage_fixed: true
+    - name: lint
+      run: |
+        printf '%s\0' {staged_files} |
+          lefthook run lint-check --no-auto-install --files-from-stdin
+
+commit-msg:
+  jobs:
+    - name: commitlint
+      run: commitlint --edit {1}
+
+format:
+  # Each file has one formatter, so the jobs never touch the same file.
+  parallel: true
+  jobs:
+    - name: prettier
+      run: prettier --write --ignore-unknown {all_files}
+    - name: shfmt
+      run: |
+        set -o pipefail
+        shfmt --find=0 {all_files} | xargs -0 -r shfmt --write
+    - name: tombi
+      glob: "*.toml"
+      run: tombi format --quiet {all_files}
+
+format-check:
+  parallel: true
+  jobs:
+    - name: prettier
+      run: prettier --check --ignore-unknown {all_files}
+    - name: shfmt
+      run: |
+        set -o pipefail
+        shfmt --find=0 {all_files} | xargs -0 -r shfmt --diff
+    - name: tombi
+      glob: "*.toml"
+      # --check alone doesn't show what's wrong; --diff alone writes the fix.
+      run: tombi format --check --diff {all_files}
+
+lint:
+  parallel: true
+  jobs:
+    - name: shellcheck
+      run: |
+        set -o pipefail
+        shfmt --find=0 {all_files} | xargs -0 -r shellcheck
+    - name: ruff
+      glob: "*.py"
+      run: ruff check --fix {all_files}
+
+lint-check:
+  parallel: true
+  jobs:
+    - name: shellcheck
+      run: |
+        set -o pipefail
+        shfmt --find=0 {all_files} | xargs -0 -r shellcheck
+    - name: ruff
+      glob: "*.py"
+      run: ruff check {all_files}

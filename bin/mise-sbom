@@ -1,0 +1,367 @@
+#!/usr/bin/env bash
+# Prototype CycloneDX SBOM generator and dependency scanner for mise-managed projects.
+# Implements Decision 028 and issue #71 prior to trivy-plugin-mise extraction.
+set -euo pipefail
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [COMMAND] [OPTIONS]
+
+Commands:
+  generate [OPTIONS]   Generate CycloneDX SBOM (sbom.cdx.json) [default]
+  scan [OPTIONS]       Scan repository and toolchain for vulnerabilities and licenses
+
+Generate options:
+  -o, --output FILE    Output path for CycloneDX SBOM (default: sbom.cdx.json)
+  -h, --help           Show this help message
+
+Scan options:
+  --repo-only          Scan only repository dependencies (skip toolchain)
+  --toolchain-only     Scan only toolchain dependencies
+  -h, --help           Show this help message
+EOF
+}
+
+REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+
+CLEANUP_DIRS=()
+cleanup() {
+  for d in "${CLEANUP_DIRS[@]}"; do
+    [[ -d "$d" ]] && rm -rf "$d"
+  done
+}
+trap cleanup EXIT
+
+for cmd in trivy python3; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: '$cmd' is required but not installed." >&2
+    exit 1
+  fi
+done
+
+materialize_locks() {
+  local target_dir=$1
+  local count=0
+  local locks_dir="$REPO_ROOT/.mise/locks"
+
+  if [[ -d "$locks_dir" ]]; then
+    while IFS= read -r -d '' ver_dir; do
+      local rel_path="${ver_dir#"$locks_dir"/}"
+      local safe_name
+      safe_name="$(tr '/' '-' <<<"$rel_path")"
+      local dest="$target_dir/$safe_name"
+      mkdir -p "$dest"
+
+      for src_file in "$ver_dir"/*; do
+        if [[ -f "$src_file" ]]; then
+          local base
+          base=$(basename "$src_file")
+          cp "$src_file" "$dest/$base"
+          count=$((count + 1))
+          if [[ "$base" == "aube-lock.yaml" ]]; then
+            cp "$src_file" "$dest/pnpm-lock.yaml"
+          fi
+        fi
+      done
+    done < <(find "$locks_dir" -mindepth 2 -maxdepth 2 -type d -print0)
+  fi
+
+  printf '%d' "$count"
+}
+
+cmd_generate() {
+  local output_file="$REPO_ROOT/sbom.cdx.json"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    -o | --output)
+      output_file="$2"
+      shift 2
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Error: Unknown generate option '$1'" >&2
+      usage >&2
+      exit 1
+      ;;
+    esac
+  done
+
+  local tmpdir
+  tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/mise-sbom.XXXXXX")
+  CLEANUP_DIRS+=("$tmpdir")
+
+  local materialized_count
+  materialized_count=$(materialize_locks "$tmpdir/workspace")
+
+  local base_sbom="$tmpdir/base-sbom.cdx.json"
+  trivy fs --format cyclonedx --output "$base_sbom" "$REPO_ROOT" >/dev/null
+
+  local locks_sbom="$tmpdir/locks-sbom.cdx.json"
+  if [[ "$materialized_count" -gt 0 ]]; then
+    trivy fs --format cyclonedx --output "$locks_sbom" "$tmpdir/workspace" >/dev/null
+  else
+    printf '{"components": [], "dependencies": []}\n' >"$locks_sbom"
+  fi
+
+  python3 - "$REPO_ROOT" "$base_sbom" "$locks_sbom" "$output_file" <<'PYEOF'
+import json
+import os
+import sys
+import tomllib
+
+repo_root = sys.argv[1]
+base_sbom_path = sys.argv[2]
+locks_sbom_path = sys.argv[3]
+output_path = sys.argv[4]
+
+with open(base_sbom_path, "r", encoding="utf-8") as f:
+    base_sbom = json.load(f)
+
+with open(locks_sbom_path, "r", encoding="utf-8") as f:
+    locks_sbom = json.load(f)
+
+toolchain_components = []
+component_by_purl = {}
+
+# 1. Parse direct tools from mise.lock
+mise_lock_path = os.path.join(repo_root, "mise.lock")
+if os.path.isfile(mise_lock_path):
+    with open(mise_lock_path, "rb") as f:
+        lock_data = tomllib.load(f)
+
+    for tool_name, entries in lock_data.get("tools", {}).items():
+        if not isinstance(entries, list):
+            entries = [entries]
+        for entry in entries:
+            version = str(entry.get("version", ""))
+            backend = str(entry.get("backend", ""))
+
+            if backend.startswith("npm:"):
+                pkg = backend.removeprefix("npm:")
+                if pkg.startswith("@"):
+                    scope, pname = pkg.split("/", 1)
+                    encoded_pkg = f"%40{scope[1:]}/{pname}"
+                else:
+                    encoded_pkg = pkg
+                purl = f"pkg:npm/{encoded_pkg}@{version}"
+                display_name = pkg
+            elif backend.startswith("aqua:"):
+                repo = backend.removeprefix("aqua:")
+                purl = f"pkg:github/{repo}@{version}"
+                display_name = tool_name
+            elif backend.startswith("core:"):
+                core_name = backend.removeprefix("core:")
+                purl = f"pkg:generic/{core_name}@{version}"
+                display_name = tool_name
+            elif backend.startswith("cargo:"):
+                pkg = backend.removeprefix("cargo:")
+                purl = f"pkg:cargo/{pkg}@{version}"
+                display_name = tool_name
+            elif backend.startswith("go:"):
+                pkg = backend.removeprefix("go:")
+                purl = f"pkg:golang/{pkg}@{version}"
+                display_name = tool_name
+            elif backend.startswith("pipx:") or backend.startswith("python:"):
+                pkg = backend.split(":", 1)[1]
+                purl = f"pkg:pypi/{pkg}@{version}"
+                display_name = tool_name
+            else:
+                purl = f"pkg:generic/{tool_name}@{version}"
+                display_name = tool_name
+
+            props = [
+                {"name": "mise:tool", "value": tool_name},
+                {"name": "mise:backend", "value": backend},
+            ]
+
+            ext_refs = []
+            for k, v in entry.items():
+                if k.startswith("platforms.") and isinstance(v, dict):
+                    plat = k.removeprefix("platforms.")
+                    if "checksum" in v:
+                        props.append({
+                            "name": f"mise:platform:{plat}:checksum",
+                            "value": str(v["checksum"]),
+                        })
+                    if "url" in v:
+                        props.append({
+                            "name": f"mise:platform:{plat}:url",
+                            "value": str(v["url"]),
+                        })
+                        ext_refs.append({
+                            "type": "distribution",
+                            "url": str(v["url"]),
+                            "comment": f"Platform {plat} download",
+                        })
+                    if "provenance" in v:
+                        props.append({
+                            "name": f"mise:platform:{plat}:provenance",
+                            "value": str(v["provenance"]),
+                        })
+                    if "checksum_source" in v:
+                        props.append({
+                            "name": f"mise:platform:{plat}:checksum_source",
+                            "value": str(v["checksum_source"]),
+                        })
+
+            if "aube" in entry and isinstance(entry["aube"], dict):
+                for ak, av in entry["aube"].items():
+                    props.append({"name": f"mise:aube:{ak}", "value": str(av)})
+
+            comp = {
+                "bom-ref": purl,
+                "type": "application",
+                "name": display_name,
+                "version": version,
+                "purl": purl,
+                "properties": props,
+            }
+            if ext_refs:
+                comp["externalReferences"] = ext_refs
+
+            toolchain_components.append(comp)
+            component_by_purl[purl] = comp
+
+# 2. Merge transitive components from locks_sbom
+for lc in locks_sbom.get("components", []):
+    purl = lc.get("purl")
+    if not purl:
+        continue
+    if purl in component_by_purl:
+        existing = component_by_purl[purl]
+        existing_prop_names = {p["name"] for p in existing.get("properties", [])}
+        for p in lc.get("properties", []):
+            if p["name"] not in existing_prop_names:
+                existing.setdefault("properties", []).append(p)
+    else:
+        toolchain_components.append(lc)
+        component_by_purl[purl] = lc
+
+# 3. Merge dependency relationships
+existing_refs = {d["ref"] for d in base_sbom.get("dependencies", [])}
+for ld in locks_sbom.get("dependencies", []):
+    ref = ld.get("ref", "")
+    if ref and not ref.endswith(".yaml") and not ref.startswith("/"):
+        filtered_depends = [
+            dep
+            for dep in ld.get("dependsOn", [])
+            if not dep.endswith(".yaml") and not dep.startswith("/")
+        ]
+        if ref not in existing_refs:
+            base_sbom.setdefault("dependencies", []).append({
+                "ref": ref,
+                "dependsOn": filtered_depends,
+            })
+            existing_refs.add(ref)
+
+# 4. Inject formulation section
+formula = {
+    "bom-ref": "formula:mise-toolchain",
+    "components": toolchain_components,
+    "workflows": [
+        {
+            "bom-ref": "workflow:mise-toolchain",
+            "uid": "mise-toolchain",
+            "name": "mise development and build toolchain",
+            "description": "Deterministic development and build toolchain pinned in mise.toml and locked in mise.lock",
+            "taskTypes": ["build", "lint", "test", "scan"],
+        }
+    ],
+}
+base_sbom["formulation"] = [formula]
+
+with open(output_path, "w", encoding="utf-8") as f:
+    json.dump(base_sbom, f, indent=2)
+    f.write("\n")
+PYEOF
+
+  echo "CycloneDX SBOM written to $output_file"
+}
+
+cmd_scan() {
+  local scan_repo=true
+  local scan_toolchain=true
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --repo-only)
+      scan_toolchain=false
+      shift
+      ;;
+    --toolchain-only)
+      scan_repo=false
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Error: Unknown scan option '$1'" >&2
+      usage >&2
+      exit 1
+      ;;
+    esac
+  done
+
+  local repo_status=0
+  local toolchain_status=0
+
+  if [[ "$scan_repo" == "true" ]]; then
+    echo "==> Scanning repository dependencies (vuln, license)..."
+    trivy fs "$REPO_ROOT" || repo_status=$?
+  fi
+
+  if [[ "$scan_toolchain" == "true" ]]; then
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/mise-scan.XXXXXX")
+    CLEANUP_DIRS+=("$tmpdir")
+
+    local materialized_count
+    materialized_count=$(materialize_locks "$tmpdir/workspace")
+
+    if [[ "$materialized_count" -gt 0 ]]; then
+      echo "==> Scanning toolchain lockfiles (.mise/locks/) for vulnerabilities..."
+      trivy fs \
+        --config "$REPO_ROOT/trivy.yaml" \
+        --scanners vuln \
+        "$tmpdir/workspace" || toolchain_status=$?
+    else
+      echo "==> No toolchain lockfiles found under .mise/locks/; skipping toolchain scan."
+    fi
+  fi
+
+  if [[ "$repo_status" -ne 0 || "$toolchain_status" -ne 0 ]]; then
+    echo "Scan failed: unaccepted findings detected." >&2
+    exit 1
+  fi
+
+  echo "Scan succeeded: all dependencies and toolchains passed."
+}
+
+# Main dispatcher
+ACTION="${1:-generate}"
+if [[ "$ACTION" != -* && $# -gt 0 ]]; then
+  shift
+fi
+
+case "$ACTION" in
+generate)
+  cmd_generate "$@"
+  ;;
+scan)
+  cmd_scan "$@"
+  ;;
+-h | --help)
+  usage
+  exit 0
+  ;;
+*)
+  # Default to generate if first argument looks like an option
+  cmd_generate "$ACTION" "$@"
+  ;;
+esac

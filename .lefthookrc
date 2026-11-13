@@ -1,0 +1,5 @@
+#!/bin/sh
+# Sourced by the git hooks lefthook installs: loads mise's environment, so the tools
+# pinned in mise.toml are on PATH even when the git client doesn't have the shims.
+# -s bash: the hook runs under sh, so the output must not follow the user's $SHELL (e.g. fish).
+command -v mise >/dev/null 2>&1 && eval "$(mise env -s bash)"

@@ -1,0 +1,21 @@
+{
+  "post-edit": {
+    "PostToolUse": [
+      {
+        "matcher": "write_file|edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "../hooks/post-edit"
+          }
+        ]
+      }
+    ],
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "../hooks/post-edit"
+      }
+    ]
+  }
+}

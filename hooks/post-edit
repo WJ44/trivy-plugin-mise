@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Agent post-edit hook for Claude Code and Antigravity.
+# Formats and lints files edited by agents via lefthook, and reports
+# unfixable lint errors back to the calling agent.
+set -euo pipefail
+
+export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
+
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+
+PAYLOAD=$(cat)
+if ! jq -e . >/dev/null 2>&1 <<<"$PAYLOAD"; then
+  echo "{}"
+  exit 0
+fi
+
+# Extract fields in a single jq call (one field per line so empty values never shift columns):
+# - Claude Code PostToolUse sets .tool_input (with .file_path)
+# - Antigravity PostToolUse sets .toolCall.args.Path and .conversationId
+# - Antigravity PostInvocation sets .conversationId (no toolCall)
+readarray -t FIELDS < <(
+  jq -r '
+    (if has("tool_input") or has("tool_name") then "PostToolUse"
+     elif has("toolCall") then "PostToolUse"
+     else "PostInvocation" end),
+    (if has("tool_input") or has("tool_name") then "claude"
+     else "antigravity" end),
+    (if (.conversationId // "") != "" then .conversationId else "default" end),
+    (.tool_input.file_path // .tool_input.path // .toolCall.args.Path // .toolCall.args.path // "")
+  ' <<<"$PAYLOAD"
+)
+EVENT="${FIELDS[0]}"
+HARNESS="${FIELDS[1]}"
+CONV_ID="${FIELDS[2]}"
+FILE_PATH="${FIELDS[3]}"
+
+CACHE_FILE="/tmp/agy-lint-${UID}-${CONV_ID}.txt"
+
+# Antigravity PostInvocation: flush any cached lint errors back to the agent
+if [[ "$EVENT" == "PostInvocation" ]]; then
+  if [[ -s "$CACHE_FILE" ]]; then
+    LINT_MSG=$(cat "$CACHE_FILE")
+    rm -f "$CACHE_FILE"
+    jq -n --arg msg "$LINT_MSG" '{
+      injectSteps: [{ systemMessage: { systemMessage: $msg } }]
+    }'
+  else
+    echo "{}"
+  fi
+  exit 0
+fi
+
+[[ -z "$FILE_PATH" ]] && {
+  echo "{}"
+  exit 0
+}
+
+# Resolve path relative to REPO_ROOT and ignore files outside the repository
+if [[ "$FILE_PATH" == /* ]]; then
+  CANONICAL_PATH=$(realpath -m "$FILE_PATH")
+else
+  CANONICAL_PATH=$(realpath -m "$REPO_ROOT/$FILE_PATH")
+fi
+
+if [[ "$CANONICAL_PATH" != "$REPO_ROOT/"* || ! -f "$CANONICAL_PATH" ]]; then
+  echo "{}"
+  exit 0
+fi
+
+REL_PATH="${CANONICAL_PATH#"$REPO_ROOT/"}"
+cd "$REPO_ROOT"
+
+LINT_OUTPUT=""
+if ! FORMAT_OUT=$(lefthook run format --no-auto-install --file "$REL_PATH" 2>&1); then
+  LINT_OUTPUT="$FORMAT_OUT"
+fi
+if ! LINT_RUN_OUT=$(lefthook run lint --no-auto-install --file "$REL_PATH" 2>&1); then
+  LINT_OUTPUT="${LINT_OUTPUT:+$LINT_OUTPUT$'\n\n'}$LINT_RUN_OUT"
+fi
+
+if [[ -z "$LINT_OUTPUT" ]]; then
+  echo "{}"
+  exit 0
+fi
+
+# shellcheck disable=SC2001
+CLEAN_OUT=$(sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' <<<"$LINT_OUTPUT")
+
+if [[ "$HARNESS" == "claude" ]]; then
+  jq -n --arg reason "$CLEAN_OUT" '{ decision: "block", reason: $reason }'
+else
+  printf "%s\n\n" "$CLEAN_OUT" >>"$CACHE_FILE"
+  echo "{}"
+fi

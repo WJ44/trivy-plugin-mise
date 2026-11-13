@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Synchronize GitHub issue labels from .github/labels.json.
+# Only creates or updates labels that are missing or differ from the remote state.
+set -euo pipefail
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--prune] [--dry-run] [-h|--help]
+
+Synchronize GitHub repository issue labels from .github/labels.json.
+
+Options:
+  --prune      Delete repository labels not defined in .github/labels.json.
+  --dry-run    Print planned label changes without modifying GitHub.
+  -h, --help   Show this help message.
+EOF
+}
+
+PRUNE=false
+DRY_RUN=false
+
+for arg in "$@"; do
+  case "$arg" in
+  --prune)
+    PRUNE=true
+    ;;
+  --dry-run)
+    DRY_RUN=true
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "Error: Unknown argument '$arg'." >&2
+    usage >&2
+    exit 1
+    ;;
+  esac
+done
+
+REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+LABELS_FILE="$REPO_ROOT/.github/labels.json"
+
+for cmd in gh jq; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: '$cmd' is required but not installed." >&2
+    exit 1
+  fi
+done
+
+if [[ ! -f "$LABELS_FILE" ]]; then
+  echo "Error: Labels file not found at $LABELS_FILE" >&2
+  exit 1
+fi
+
+remote_json=$(gh label list --limit 100 --json name,color,description)
+changes=0
+
+while IFS=$'\t' read -r name color description; do
+  existing=$(jq -r --arg n "$name" '.[] | select(.name == $n) | [(.color | ascii_downcase), .description] | @tsv' <<<"$remote_json")
+  target="$(tr '[:upper:]' '[:lower:]' <<<"$color")"$'\t'"$description"
+
+  if [[ -z "$existing" ]]; then
+    changes=$((changes + 1))
+    if [[ "$DRY_RUN" == "true" ]]; then
+      echo "[dry-run] Would create label '$name' (#$color)"
+    else
+      echo "Creating label '$name' (#$color)..."
+      gh label create "$name" --color "$color" --description "$description"
+    fi
+  elif [[ "$existing" != "$target" ]]; then
+    changes=$((changes + 1))
+    if [[ "$DRY_RUN" == "true" ]]; then
+      echo "[dry-run] Would update label '$name' (#$color)"
+    else
+      echo "Updating label '$name' (#$color)..."
+      gh label create "$name" --color "$color" --description "$description" --force
+    fi
+  fi
+done < <(jq -r '.[] | [.name, .color, .description] | @tsv' "$LABELS_FILE")
+
+if [[ "$PRUNE" == "true" ]]; then
+  while IFS= read -r repo_label; do
+    [[ -z "$repo_label" ]] && continue
+    if ! jq -e --arg n "$repo_label" 'any(.[]; .name == $n)' "$LABELS_FILE" >/dev/null; then
+      changes=$((changes + 1))
+      if [[ "$DRY_RUN" == "true" ]]; then
+        echo "[dry-run] Would delete unmanaged label '$repo_label'"
+      else
+        echo "Deleting unmanaged label '$repo_label'..."
+        gh label delete "$repo_label" --yes
+      fi
+    fi
+  done < <(jq -r '.[].name' <<<"$remote_json")
+fi
+
+if [[ "$changes" -eq 0 ]]; then
+  echo "All labels are up to date."
+else
+  echo "Done ($changes label change(s))."
+fi
