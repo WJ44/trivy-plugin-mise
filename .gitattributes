@@ -1,0 +1,4 @@
+# Normalise line endings in git, matching end_of_line in .editorconfig.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf

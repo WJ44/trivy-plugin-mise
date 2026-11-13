@@ -1,0 +1,7 @@
+.env.*
+.claude/settings.local.json
+host/.agent-identity.local
+*.pem
+__pycache__/
+*.pyc
+sbom.cdx.json

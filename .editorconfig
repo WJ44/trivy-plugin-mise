@@ -1,0 +1,30 @@
+# Formatter, linter, and editor settings that differ from tool defaults.
+# Put custom settings here whenever the tool supports .editorconfig; use a
+# tool-specific config file (e.g. .prettierrc.json) only for settings
+# .editorconfig cannot express. See agent-context/harness/formatting-and-linting.md.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.md]
+# Two trailing spaces are a hard line break in Markdown.
+trim_trailing_whitespace = false
+
+[*.{bat,cmd}]
+# cmd.exe misparses labels and goto in files with LF line endings.
+end_of_line = crlf
+
+# shfmt indents with tabs by default. [[shell]] is shfmt's syntax: it matches files by
+# detected language (extension or shebang), so scripts without an extension match too.
+[[shell]]
+indent_style = space
+indent_size = 2
+
+# The same for editors, which don't understand [[shell]].
+[*.{sh,bash}]
+indent_style = space
+indent_size = 2

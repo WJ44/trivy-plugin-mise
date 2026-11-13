@@ -1,0 +1,26 @@
+# .trivyignore.yaml
+# Explicit risk-acceptance ledger for vulnerabilities and licenses.
+#
+# Every accepted finding must include an explanatory rationale (`statement`)
+# and should include an expiration date (`expired_at`) where applicable.
+#
+# Supported categories:
+# - vulnerabilities (id, statement, expired_at, paths, purls)
+# - licenses (id, statement, expired_at, paths)
+# - misconfigurations (id, statement, expired_at, paths)
+# - secrets (id, statement, expired_at, paths)
+#
+# Example:
+# vulnerabilities:
+#   - id: CVE-2026-1234
+#     statement: "Mitigated by runtime network isolation; upgrade pending next release."
+#     expired_at: 2026-12-31
+#     paths:
+#       - "package.json"
+#
+# licenses:
+#   - id: MPL-2.0
+#     statement: "Reviewed and approved for non-modified library distribution."
+
+vulnerabilities: []
+licenses: []

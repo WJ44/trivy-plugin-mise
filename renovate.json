@@ -1,0 +1,24 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:best-practices", ":semanticCommitTypeAll(chore)"],
+  "labels": ["chore"],
+  "ignorePaths": ["**/.mise/**"],
+  "rebaseWhen": "auto",
+  "packageRules": [
+    {
+      "description": "Group GitHub Actions workflow updates",
+      "matchManagers": ["github-actions"],
+      "groupName": "github-actions",
+      "groupSlug": "github-actions"
+    },
+    {
+      "description": "Apply cooldown period to non-major updates to prevent zero-day supply chain issues",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "minimumReleaseAge": "3 days"
+    }
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 5am on monday"]
+  }
+}
