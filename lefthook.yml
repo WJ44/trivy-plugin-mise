@@ -9,7 +9,7 @@
 #
 # Every tool gets every file and picks out the ones it handles: Prettier skips unknown
 # files (--ignore-unknown), shfmt --find keeps shell files (by extension or shebang).
-# Tools that can't pick out their own files get a glob (tombi, ruff).
+# Tools that can't pick out their own files get a glob (tombi, ruff, rustfmt, clippy).
 #
 # Commands with pipes start with set -o pipefail, so failures aren't hidden.
 
@@ -50,7 +50,7 @@ format:
       run: tombi format --quiet {all_files}
     - name: rustfmt
       glob: "*.rs"
-      run: rustfmt {all_files}
+      run: rustfmt --edition 2024 {all_files}
 
 format-check:
   parallel: true
@@ -67,7 +67,7 @@ format-check:
       run: tombi format --check --diff {all_files}
     - name: rustfmt
       glob: "*.rs"
-      run: rustfmt --check {all_files}
+      run: rustfmt --check --edition 2024 {all_files}
 
 lint:
   parallel: true
