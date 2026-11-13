@@ -31,6 +31,22 @@ jobs:
       - name: Lint check
         run: mise x -- lefthook run lint-check
 
+  test:
+    name: Build and test
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install mise
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5
+        with:
+          cache: true
+
+      - name: Run tests
+        run: mise x -- cargo test --locked
+
   scan:
     name: SBOM and security scan
     runs-on: ubuntu-latest
