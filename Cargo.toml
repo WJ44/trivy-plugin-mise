@@ -7,3 +7,6 @@ repository = "https://github.com/WJ44/trivy-plugin-mise"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+toml = "1.2.1"
