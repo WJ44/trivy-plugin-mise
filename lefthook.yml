@@ -48,6 +48,9 @@ format:
     - name: tombi
       glob: "*.toml"
       run: tombi format --quiet {all_files}
+    - name: rustfmt
+      glob: "*.rs"
+      run: rustfmt {all_files}
 
 format-check:
   parallel: true
@@ -62,6 +65,9 @@ format-check:
       glob: "*.toml"
       # --check alone doesn't show what's wrong; --diff alone writes the fix.
       run: tombi format --check --diff {all_files}
+    - name: rustfmt
+      glob: "*.rs"
+      run: rustfmt --check {all_files}
 
 lint:
   parallel: true
@@ -73,6 +79,11 @@ lint:
     - name: ruff
       glob: "*.py"
       run: ruff check --fix {all_files}
+    - name: clippy
+      glob: "*.rs"
+      run: |
+        # {all_files}
+        cargo clippy --fix --allow-dirty --allow-staged --all-targets -- -D warnings
 
 lint-check:
   parallel: true
@@ -84,3 +95,8 @@ lint-check:
     - name: ruff
       glob: "*.py"
       run: ruff check {all_files}
+    - name: clippy
+      glob: "*.rs"
+      run: |
+        # {all_files}
+        cargo clippy --all-targets -- -D warnings
