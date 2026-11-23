@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/WJ44/trivy-plugin-mise/compare/v1.0.0...v1.1.0) (2026-11-23)
+
+
+### Features
+
+* **sbom:** preserve toolchain dependencies and workflows in formulation mode ([#24](https://github.com/WJ44/trivy-plugin-mise/issues/24)) ([436fdff](https://github.com/WJ44/trivy-plugin-mise/commit/436fdffe51ee17a45e087022844b7c3943594e2f)), closes [#22](https://github.com/WJ44/trivy-plugin-mise/issues/22)
+* **scan:** add tier-selection flags and tier headers ([#26](https://github.com/WJ44/trivy-plugin-mise/issues/26)) ([a08b70b](https://github.com/WJ44/trivy-plugin-mise/commit/a08b70b95a560c29882d0f61a67ccefb9a17ad7e)), closes [#23](https://github.com/WJ44/trivy-plugin-mise/issues/23)
+
 ## [1.0.0](https://github.com/WJ44/trivy-plugin-mise/compare/v0.1.0...v1.0.0) (2026-11-23)
 
 
