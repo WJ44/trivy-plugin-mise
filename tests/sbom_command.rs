@@ -95,11 +95,31 @@ fn sbom_formulation_mode_on_repo_with_app_lockfile_and_mise_lock() {
         "mise tool prettier must not leak into top-level components[]"
     );
 
-    // formulation[] contains mise.lock tools (with hashes & mise:* props) and .mise/locks/ transitive deps.
+    // formulation[] contains mise.lock tools (with hashes & mise:* props), .mise/locks/ transitive deps,
+    // and workflow metadata describing the mise toolchain.
     let formulation = bom["formulation"]
         .as_array()
         .expect("formulation[] should be populated");
     assert!(!formulation.is_empty());
+    assert_eq!(formulation[0]["bom-ref"], "mise-toolchain");
+
+    let workflows = formulation[0]["workflows"]
+        .as_array()
+        .expect("formulation[0].workflows should be an array");
+    assert_eq!(workflows.len(), 1);
+    assert_eq!(workflows[0]["bom-ref"], "workflow:mise-toolchain");
+    assert_eq!(workflows[0]["uid"], "mise-toolchain");
+    assert_eq!(workflows[0]["name"], "mise development and build toolchain");
+    assert!(
+        workflows[0]["description"]
+            .as_str()
+            .is_some_and(|d| !d.is_empty()),
+        "expected non-empty workflow description"
+    );
+    assert_eq!(
+        workflows[0]["taskTypes"],
+        serde_json::json!(["build", "lint", "test", "scan"])
+    );
 
     let formula_components = formulation[0]["components"]
         .as_array()
@@ -154,6 +174,92 @@ fn sbom_formulation_mode_on_repo_with_app_lockfile_and_mise_lock() {
         .collect();
     let unique_refs: HashSet<&str> = bom_refs.iter().copied().collect();
     assert_eq!(bom_refs.len(), unique_refs.len(), "bom-refs must be unique");
+
+    // Top-level dependencies[] includes both shipped Cargo graph and mise-toolchain graph without polluting root.
+    let dependencies = bom["dependencies"]
+        .as_array()
+        .expect("top-level dependencies[] should be an array");
+    let dep_refs: Vec<&str> = dependencies
+        .iter()
+        .filter_map(|d| d.get("ref").and_then(Value::as_str))
+        .collect();
+    let unique_dep_refs: HashSet<&str> = dep_refs.iter().copied().collect();
+    assert_eq!(
+        dep_refs.len(),
+        unique_dep_refs.len(),
+        "dependencies[].ref entries must be unique"
+    );
+
+    let repo_root_ref = bom["metadata"]["component"]["bom-ref"]
+        .as_str()
+        .expect("metadata.component.bom-ref should be present");
+    let repo_root_dep = dependencies
+        .iter()
+        .find(|d| d.get("ref").and_then(Value::as_str) == Some(repo_root_ref))
+        .expect("repository root should have a dependencies[] entry");
+    let repo_root_depends_on: Vec<&str> = repo_root_dep["dependsOn"]
+        .as_array()
+        .expect("repository root dependsOn should be an array")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        !repo_root_depends_on.contains(&"mise-toolchain"),
+        "repository root dependsOn must not include mise-toolchain"
+    );
+    assert!(
+        !repo_root_depends_on
+            .iter()
+            .any(|r| r.starts_with("pkg:npm/prettier@")
+                || r.starts_with("pkg:github/evilmartians/lefthook@")),
+        "repository root dependsOn must not include mise toolchain nodes"
+    );
+
+    let toolchain_dep = dependencies
+        .iter()
+        .find(|d| d.get("ref").and_then(Value::as_str) == Some("mise-toolchain"))
+        .expect("dependencies[] should include mise-toolchain root");
+    let toolchain_depends_on: Vec<&str> = toolchain_dep["dependsOn"]
+        .as_array()
+        .expect("mise-toolchain dependsOn should be an array")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        toolchain_depends_on.contains(&"pkg:npm/prettier@3.10.1"),
+        "mise-toolchain dependsOn should include prettier"
+    );
+    assert!(
+        toolchain_depends_on.contains(&"pkg:npm/%40commitlint/cli@21.2.4"),
+        "mise-toolchain dependsOn should include @commitlint/cli"
+    );
+    assert!(
+        toolchain_depends_on
+            .iter()
+            .any(|r| r.starts_with("pkg:github/evilmartians/lefthook@2.2.2")),
+        "mise-toolchain dependsOn should include lefthook"
+    );
+
+    let commitlint_dep = dependencies
+        .iter()
+        .find(|d| d.get("ref").and_then(Value::as_str) == Some("pkg:npm/%40commitlint/cli@21.2.4"))
+        .expect("expected transitive dependency entry for @commitlint/cli");
+    assert!(
+        !commitlint_dep["dependsOn"].as_array().unwrap().is_empty(),
+        "expected @commitlint/cli to retain transitive dependsOn edges"
+    );
+
+    // Formulation output must be accepted by `trivy sbom` without regressions.
+    let trivy_out = Command::new("trivy")
+        .args(["sbom", "--quiet", output_path.to_str().unwrap()])
+        .output()
+        .expect("run trivy sbom on formulation output");
+    assert!(
+        trivy_out.status.success(),
+        "trivy sbom failed on formulation output with status {}: {}",
+        trivy_out.status,
+        String::from_utf8_lossy(&trivy_out.stderr)
+    );
 }
 
 #[test]
@@ -194,12 +300,68 @@ fn sbom_formulation_mode_on_mise_only_repo_has_empty_components_and_populated_fo
         top_components.len()
     );
 
+    assert_eq!(bom["formulation"][0]["bom-ref"], "mise-toolchain");
+    let workflows = bom["formulation"][0]["workflows"]
+        .as_array()
+        .expect("formulation[0].workflows should be populated");
+    assert_eq!(workflows.len(), 1);
+    assert_eq!(workflows[0]["bom-ref"], "workflow:mise-toolchain");
+    assert_eq!(workflows[0]["uid"], "mise-toolchain");
+    assert_eq!(
+        workflows[0]["taskTypes"],
+        serde_json::json!(["build", "lint", "test", "scan"])
+    );
+
     let formula_components = bom["formulation"][0]["components"]
         .as_array()
         .expect("formulation[0].components should be populated");
     assert!(
         formula_components.len() > 15,
         "expected mise.lock + .mise/locks/ components in formulation[]"
+    );
+
+    let dependencies = bom["dependencies"]
+        .as_array()
+        .expect("dependencies[] should be populated on mise-only repo");
+    assert!(
+        dependencies.len() > 2,
+        "expected root, mise-toolchain, and transitive entries in dependencies[], got {}",
+        dependencies.len()
+    );
+
+    let repo_root_ref = bom["metadata"]["component"]["bom-ref"]
+        .as_str()
+        .expect("metadata.component.bom-ref should be present");
+    let repo_root_dep = dependencies
+        .iter()
+        .find(|d| d.get("ref").and_then(Value::as_str) == Some(repo_root_ref))
+        .expect("empty repo root should remain in dependencies[]");
+    assert!(
+        repo_root_dep["dependsOn"].as_array().unwrap().is_empty(),
+        "empty repo root dependsOn must remain empty"
+    );
+
+    let toolchain_dep = dependencies
+        .iter()
+        .find(|d| d.get("ref").and_then(Value::as_str) == Some("mise-toolchain"))
+        .expect("mise-toolchain root should be in dependencies[]");
+    let toolchain_depends_on: Vec<&str> = toolchain_dep["dependsOn"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(toolchain_depends_on.contains(&"pkg:npm/%40commitlint/cli@21.2.4"));
+
+    let trivy_out = Command::new("trivy")
+        .args(["sbom", "--quiet", output_path.to_str().unwrap()])
+        .output()
+        .expect("run trivy sbom on mise-only formulation output");
+    assert!(
+        trivy_out.status.success(),
+        "trivy sbom failed on mise-only formulation output with status {}: {}",
+        trivy_out.status,
+        String::from_utf8_lossy(&trivy_out.stderr)
     );
 }
 
