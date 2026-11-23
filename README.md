@@ -14,6 +14,33 @@ generation and vulnerability scanning.
   `trivy plugin install github.com/WJ44/trivy-plugin-mise` (`trivy mise ...`)
   and direct installation via `mise` (`github:WJ44/trivy-plugin-mise`).
 
+## Installation
+
+### As a Trivy plugin
+
+Install directly from GitHub via `trivy plugin install`:
+
+```bash
+trivy plugin install github.com/WJ44/trivy-plugin-mise
+trivy mise --help
+```
+
+### Standalone CLI via `mise`
+
+Pin in `mise.toml` using the `github:` backend:
+
+```toml
+[tools]
+"github:WJ44/trivy-plugin-mise" = "0.1.0"
+```
+
+Then run `mise install` (and `mise lock` to pin platform checksums) and invoke
+`trivy-plugin-mise` directly:
+
+```bash
+trivy-plugin-mise --help
+```
+
 ## CLI Usage
 
 ```bash
