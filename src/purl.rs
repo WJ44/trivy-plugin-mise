@@ -46,7 +46,15 @@ impl fmt::Display for PackageUrl {
             }
         }
         if let Some(subpath) = &self.subpath {
-            write!(f, "#{subpath}")?;
+            let encoded_subpath = subpath
+                .split('/')
+                .filter(|seg| !seg.is_empty())
+                .map(percent_encode)
+                .collect::<Vec<_>>()
+                .join("/");
+            if !encoded_subpath.is_empty() {
+                write!(f, "#{encoded_subpath}")?;
+            }
         }
         Ok(())
     }
@@ -427,6 +435,12 @@ mod tests {
             .unwrap()
             .to_string(),
             "pkg:github/kubernetes/kubernetes@1.32.0#kubectl"
+        );
+        assert_eq!(
+            backend_to_purl("aqua:owner/repo/cmd/my tool", "my-tool", "1.0.0", None)
+                .unwrap()
+                .to_string(),
+            "pkg:github/owner/repo@1.0.0#cmd/my%20tool"
         );
     }
 }
