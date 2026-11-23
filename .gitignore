@@ -7,3 +7,29 @@ __pycache__/
 .pytest_cache/
 sbom.cdx.json
 /target
+
+# --- harness:release:start ---
+/AGENTS.md
+/AGENTS.template.md
+/CLAUDE.md
+/README.template.md
+/templates/
+/agent-context/harness/
+/decisions/harness/
+/docs/harness/
+/.agents/
+/.claude/
+/.mcp.json
+/hooks/
+/shim/
+/.github/ISSUE_TEMPLATE/
+/.github/PULL_REQUEST_TEMPLATE/
+/.github/labels.json
+/bin/harness.py
+/bin/sync-labels
+/bin/wait-pr-checks
+/setup.sh
+/setup-system.sh
+/setup-user.sh
+/.harness.json
+# --- harness:release:end ---
