@@ -9,7 +9,7 @@
 #
 # Every tool gets every file and picks out the ones it handles: Prettier skips unknown
 # files (--ignore-unknown), shfmt --find keeps shell files (by extension or shebang).
-# Tools that can't pick out their own files get a glob (tombi, ruff, rustfmt, clippy).
+# Tools that can't pick out their own files get a glob (tombi, ruff, trivyignore).
 #
 # Commands with pipes start with set -o pipefail, so failures aren't hidden.
 
@@ -17,7 +17,15 @@
 rc: ./.lefthookrc
 
 pre-commit:
+  piped: true
   jobs:
+    # Fail before formatting so unresolved conflict markers are never reformatted
+    # and re-staged via stage_fixed.
+    - name: conflict-markers
+      run: |
+        set -o pipefail
+        printf '%s\0' {staged_files} |
+          lefthook run lint-check --no-auto-install --job conflict-markers --files-from-stdin
     # Runs the format jobs on the staged files, so each tool is only listed below.
     # printf: the file list goes over stdin, one NUL-terminated path per file.
     - name: format
@@ -37,66 +45,105 @@ commit-msg:
 
 format:
   # Each file has one formatter, so the jobs never touch the same file.
+  files: &repo_files |
+    git -c core.quotepath=false ls-files --cached --others --exclude-standard |
+      while IFS= read -r f; do
+        if [ -e "$f" ] || [ -L "$f" ]; then
+          printf '%s\n' "$f"
+        fi
+      done
   parallel: true
   jobs:
     - name: prettier
-      run: prettier --write --ignore-unknown {all_files}
+      run: prettier --write --ignore-unknown {files}
     - name: shfmt
       run: |
         set -o pipefail
-        shfmt --find=0 {all_files} | xargs -0 -r shfmt --write
+        shfmt --find=0 {files} | xargs -0 -r shfmt --write
     - name: tombi
       glob: "*.toml"
-      run: tombi format --quiet {all_files}
-    - name: rustfmt
-      glob: "*.rs"
-      run: rustfmt --edition 2024 {all_files}
+      run: tombi format --quiet {files}
+    - name: ruff
+      glob: "*.py"
+      run: ruff format {files}
 
 format-check:
+  files: *repo_files
   parallel: true
   jobs:
     - name: prettier
-      run: prettier --check --ignore-unknown {all_files}
+      run: prettier --check --ignore-unknown {files}
     - name: shfmt
       run: |
         set -o pipefail
-        shfmt --find=0 {all_files} | xargs -0 -r shfmt --diff
+        shfmt --find=0 {files} | xargs -0 -r shfmt --diff
     - name: tombi
       glob: "*.toml"
       # --check alone doesn't show what's wrong; --diff alone writes the fix.
-      run: tombi format --check --diff {all_files}
-    - name: rustfmt
-      glob: "*.rs"
-      run: rustfmt --check --edition 2024 {all_files}
+      run: tombi format --check --diff {files}
+    - name: ruff
+      glob: "*.py"
+      run: ruff format --check {files}
 
 lint:
+  files: *repo_files
   parallel: true
   jobs:
+    - &conflict_markers_job
+      name: conflict-markers
+      run: |
+        rc=0
+        grep -nIE -- '^(<{7}|={7}|>{7})([[:space:]]|$)' {files} </dev/null || rc=$?
+        if [ "$rc" -eq 0 ]; then
+          echo "Error: unresolved merge conflict markers found." >&2
+          exit 1
+        elif [ "$rc" -ne 1 ]; then
+          exit "$rc"
+        fi
     - name: shellcheck
       run: |
         set -o pipefail
-        shfmt --find=0 {all_files} | xargs -0 -r shellcheck
+        shfmt --find=0 {files} | xargs -0 -r shellcheck
     - name: ruff
       glob: "*.py"
-      run: ruff check --fix {all_files}
-    - name: clippy
-      glob: "*.rs"
-      run: |
-        # {all_files}
-        cargo clippy --fix --allow-dirty --allow-staged --all-targets -- -D warnings
+      run: ruff check --fix {files}
+    - group:
+        parallel: false
+        pipelined: false
+        jobs:
+          - name: rumdl
+            glob: "*.md"
+            run: rumdl check --fix {files}
+          - &decisions_job
+            name: decisions
+            glob: "{decisions/*.md,decisions/harness/*.md,./decisions/*.md,./decisions/harness/*.md}"
+            run: bin/validate-decisions.py {files}
+    - &trivyignore_job
+      name: trivyignore
+      glob: "{.trivyignore.yaml,./.trivyignore.yaml}"
+      run:
+        yq --yaml-fix-merge-anchor-to-spec=true --from-file
+        bin/validate-trivyignore.yq {files} >/dev/null
+    - &tombi_lint_job
+      name: tombi
+      glob: "*.toml"
+      run: tombi lint --quiet {files}
 
 lint-check:
+  files: *repo_files
   parallel: true
   jobs:
+    - *conflict_markers_job
     - name: shellcheck
       run: |
         set -o pipefail
-        shfmt --find=0 {all_files} | xargs -0 -r shellcheck
+        shfmt --find=0 {files} | xargs -0 -r shellcheck
     - name: ruff
       glob: "*.py"
-      run: ruff check {all_files}
-    - name: clippy
-      glob: "*.rs"
-      run: |
-        # {all_files}
-        cargo clippy --all-targets -- -D warnings
+      run: ruff check {files}
+    - name: rumdl
+      glob: "*.md"
+      run: rumdl check {files}
+    - *decisions_job
+    - *trivyignore_job
+    - *tombi_lint_job

@@ -22,10 +22,22 @@ are critical**:
 
 - **Agent loop stopping condition:** Autonomous agents iterate against the
   acceptance criteria to verify the task is complete before opening a PR.
+
 - **Human steering:** On human-created issues, acceptance criteria define the
   exact boundaries of satisfaction. On agent-created proposals, reviewing and
   refining the acceptance criteria is the primary mechanism (alongside approval)
   for a human to steer the implementation.
+
+- When an issue is picked up or inspected via `gh`, prefer structured JSON
+  output over plain `gh issue view <id> --comments`, which line-wraps Markdown
+  prose and can truncate long bodies or comments:
+
+  ```bash
+  gh issue view <id> --json title,body,labels,comments,author
+  ```
+
+  When updating an issue body from the CLI, pass Markdown via
+  `gh issue edit <id> --body-file -` to preserve formatting and checklists.
 
 ### Writing acceptance criteria
 
@@ -44,6 +56,23 @@ To prevent autonomous agents from drifting into unrelated refactoring:
 
 - Specify target files, directories, or components to touch.
 - Call out explicit non-goals or files that must not be modified.
+
+### Declaring dependencies
+
+When an issue depends on one or more prerequisite issues in the same repository:
+
+- Declare each prerequisite explicitly in the issue body using
+  `Depends on #<id>` or `Blocked by #<id>` (for example, `Depends on #42` or
+  `Blocked by #42`).
+- In the [task queue](task-queue.md), carrying the `blocked` label does **not**
+  exclude an issue from open-ended queue execution if **all** of its declared
+  blockers are prerequisite `#<id>` issues that are either closed/merged, ready
+  in the current queue, or backed by a queued or qualifying open PR (allowing
+  the dispatcher to order and stack linear chains automatically).
+- Keep the `blocked` label alongside an explicit prose description whenever an
+  issue is gated by an external dependency, pending decision, unready
+  prerequisite, or anything other than qualifying `#<id>` issues so the
+  dispatcher keeps it excluded until resolved.
 
 ## Templates
 
@@ -88,9 +117,12 @@ Issue labels are defined declaratively in
 - `approved` (`#10b981`): Approved by a human and ready for agent
   implementation.
 - `needs-refinement` (`#eab308`): Needs human input, design clarification, or
-  acceptance criteria refinement before an agent picks it up.
+  acceptance criteria refinement before an agent picks it up (see
+  [Issue refinement](issue-refinement.md)).
 - `blocked` (`#f59e0b`): Blocked by an external dependency, prerequisite issue,
-  or pending decision.
+  or pending decision (in the [task queue](task-queue.md), excluded unless all
+  declared blockers are qualifying `#<id>` prerequisites per
+  [Declaring dependencies](#declaring-dependencies)).
 
 Declined or duplicate issues are closed using GitHub's native **Close as not
 planned** state reason rather than extra resolution labels.
@@ -138,6 +170,8 @@ immediately**. They wait for human review and approval:
   Criteria**, checks `- [x] Approved to proceed` in the issue body (1-tap on web
   or mobile), and adds the `approved` label (making approved proposals queryable
   via `gh issue list --label approved`).
+- When asked to interactively refine a `needs-refinement` or `proposal` issue
+  with a human, follow [Issue refinement](issue-refinement.md).
 - To decline a proposal, the human simply closes the issue as **not planned**.
 - An agent may only implement a proposal once it is approved and its acceptance
   criteria are finalized.

@@ -11,6 +11,14 @@ access to specific websites is expected and lightweight: use web search, fetch
 documentation, and download tools or packages whenever you normally would
 outside the sandbox.
 
+## Library documentation (Context7 MCP)
+
+For version-specific external library, framework, and CLI tool documentation,
+prefer the project-configured **Context7** MCP server (`resolve-library-id`
+followed by `query-docs`, hosted at `mcp.context7.com`) before falling back to
+general web search. Keep queries focused on public library APIs and
+configuration—never include secrets or proprietary code in Context7 queries.
+
 ## What to do when blocked
 
 The user approves hosts that are actually needed, so a block is not a dead end.
