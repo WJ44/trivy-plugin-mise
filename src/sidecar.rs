@@ -217,6 +217,7 @@ pub fn discover_sidecars(
                         path: source_dir.display().to_string(),
                         source,
                     })?;
+                ensure_within_project_root(project_root, &canonical, Path::new(&sidecar.path))?;
                 if !seen_dirs.insert(canonical) {
                     continue;
                 }
@@ -250,6 +251,7 @@ pub fn discover_sidecars(
                     path: ver_dir.display().to_string(),
                     source,
                 })?;
+                ensure_within_project_root(project_root, &canonical, &ver_dir)?;
                 if !seen_dirs.insert(canonical) {
                     continue;
                 }
@@ -445,6 +447,24 @@ fn validate_relative_path(raw: &str) -> Result<PathBuf, SidecarError> {
     Ok(path.to_path_buf())
 }
 
+fn ensure_within_project_root(
+    project_root: &Path,
+    canonical_dir: &Path,
+    reported_path: &Path,
+) -> Result<(), SidecarError> {
+    let canonical_root = fs::canonicalize(project_root).map_err(|source| SidecarError::Io {
+        path: project_root.display().to_string(),
+        source,
+    })?;
+    if !canonical_dir.starts_with(&canonical_root) {
+        return Err(SidecarError::InvalidSidecarPath {
+            path: reported_path.display().to_string(),
+            reason: "sidecar path must not escape the project root".to_string(),
+        });
+    }
+    Ok(())
+}
+
 fn materialized_subdir(rel_path: &Path, tool_name: &str, version: &str) -> PathBuf {
     let locks_prefix = Path::new(".mise").join("locks");
     if let Ok(stripped) = rel_path.strip_prefix(&locks_prefix)
@@ -524,10 +544,34 @@ mod tests {
 
     #[test]
     fn computes_materialized_subdir_from_mise_locks_prefix() {
-        let rel = Path::new(".mise/locks/npm-prettier/3.9.10");
+        let rel = Path::new(".mise/locks/npm-prettier/3.10.1");
         assert_eq!(
-            materialized_subdir(rel, "npm:prettier", "3.9.10"),
-            PathBuf::from("npm-prettier/3.9.10")
+            materialized_subdir(rel, "npm:prettier", "3.10.1"),
+            PathBuf::from("npm-prettier/3.10.1")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_sidecar_escaping_project_root() {
+        let project = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let locks_tool_dir = project.path().join(".mise/locks/npm-prettier");
+        fs::create_dir_all(&locks_tool_dir).unwrap();
+        std::os::unix::fs::symlink(outside.path(), locks_tool_dir.join("3.10.1")).unwrap();
+
+        let lock_toml = r#"
+lockfile_version = 3
+
+[[tools."npm:prettier"]]
+version = "3.10.1"
+aube = { path = ".mise/locks/npm-prettier/3.10.1" }
+"#;
+        let lock = MiseLock::from_str(lock_toml).unwrap();
+        let err = discover_sidecars(project.path(), Some(&lock)).unwrap_err();
+        assert!(matches!(err, SidecarError::InvalidSidecarPath { .. }));
+
+        let scan_err = discover_sidecars(project.path(), None).unwrap_err();
+        assert!(matches!(scan_err, SidecarError::InvalidSidecarPath { .. }));
     }
 }
