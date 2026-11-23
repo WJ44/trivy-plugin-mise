@@ -1,6 +1,6 @@
 [package]
 name = "trivy-plugin-mise"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2024"
 description = "Trivy plugin and standalone CLI bridging mise with Trivy for CycloneDX SBOM generation and vulnerability scanning"
 repository = "https://github.com/WJ44/trivy-plugin-mise"
