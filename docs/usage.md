@@ -33,12 +33,13 @@ Install the plugin from GitHub using Trivy's plugin manager:
 trivy plugin install github.com/WJ44/trivy-plugin-mise
 ```
 
-Invoke subcommands through `trivy mise`:
+Invoke through `trivy mise` (running with no subcommand defaults to `scan`):
 
 ```bash
 trivy mise --help
+trivy mise
+trivy mise scan -s HIGH,CRITICAL
 trivy mise sbom --output sbom.cdx.json
-trivy mise scan
 ```
 
 #### Inspecting Installed Plugin Metadata
@@ -57,6 +58,7 @@ Run the plugin directly without keeping a permanent manual step between install
 and execution:
 
 ```bash
+trivy plugin run github.com/WJ44/trivy-plugin-mise
 trivy plugin run github.com/WJ44/trivy-plugin-mise scan
 trivy plugin run github.com/WJ44/trivy-plugin-mise sbom --output sbom.cdx.json
 ```
@@ -67,6 +69,7 @@ Set `TRIVY_RUN_AS_PLUGIN=mise` to make `trivy` dispatch directly to the `mise`
 plugin without repeating `mise` on the command line:
 
 ```bash
+TRIVY_RUN_AS_PLUGIN=mise trivy
 TRIVY_RUN_AS_PLUGIN=mise trivy scan
 TRIVY_RUN_AS_PLUGIN=mise trivy sbom --output sbom.cdx.json
 ```
@@ -114,16 +117,19 @@ Invoke `trivy-plugin-mise` directly (or via `mise x --` / `mise run`):
 
 ```bash
 trivy-plugin-mise --help
+trivy-plugin-mise
+trivy-plugin-mise scan -s HIGH,CRITICAL
 trivy-plugin-mise sbom --output sbom.cdx.json
-trivy-plugin-mise scan
 ```
 
 ---
 
 ## CLI Reference
 
-All subcommands accept identically structured flags whether invoked as
-`trivy mise <subcommand>` or `trivy-plugin-mise <subcommand>`.
+All commands accept identically structured flags whether invoked as
+`trivy mise ...` or `trivy-plugin-mise ...`. Running `trivy mise` or
+`trivy-plugin-mise` **with no subcommand** executes `scan` by default (accepting
+all `scan` positional arguments, options, and trailing `-- <TRIVY_ARGS>...`).
 
 ### `sbom`
 
@@ -131,8 +137,8 @@ Generate a CycloneDX 1.7 JSON SBOM including `mise`-managed tools and transitive
 sidecar dependencies.
 
 ```text
-trivy-plugin-mise sbom [OPTIONS] [PATH]
-trivy mise sbom [OPTIONS] [PATH]
+trivy-plugin-mise sbom [OPTIONS] [PATH] [-- <TRIVY_ARGS>...]
+trivy mise sbom [OPTIONS] [PATH] [-- <TRIVY_ARGS>...]
 ```
 
 | Argument / Flag       | Default       | Description                                                                                                                                                                                            |
@@ -142,27 +148,33 @@ trivy mise sbom [OPTIONS] [PATH]
 | `-o, --output <PATH>` | stdout        | Write pretty-printed CycloneDX 1.7 JSON to `<PATH>` (creating parent directories if needed) instead of standard output.                                                                                |
 | `--platform <TRIPLE>` | _(none)_      | Target platform triple (for example `linux-x64`, `linux-arm64`, `macos-arm64`, `windows-x64`). Selects platform-specific component `hashes[]`, download URLs, and provenance; when omitted, emits all. |
 | `--no-verify-digests` | `false`       | Skip SHA-256 digest verification for `.mise/locks/` sidecar lockfiles against `mise.lock` `digest` entries. By default, digest mismatches abort SBOM generation with a non-zero exit code.             |
+| `-- <TRIVY_ARGS>...`  | _(none)_      | Additional arguments forwarded directly to underlying `trivy fs --format cyclonedx` invocations (for example `-- --skip-dirs vendor --offline-scan`).                                                  |
 
-### `scan`
+### `scan` (Default Subcommand)
 
 Scan the repository and `mise`-managed tool dependencies for vulnerabilities and
-license compliance.
+license compliance. Can be invoked either explicitly via `scan` or as the
+default command when no subcommand is given:
 
 ```text
-trivy-plugin-mise scan [OPTIONS] [TARGET]
-trivy mise scan [OPTIONS] [TARGET]
+trivy-plugin-mise [scan] [OPTIONS] [TARGET] [-- <TRIVY_ARGS>...]
+trivy mise [scan] [OPTIONS] [TARGET] [-- <TRIVY_ARGS>...]
 ```
 
-| Argument / Flag         | Default                      | Description                                                                                                                                                                       |
-| ----------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `[TARGET]`              | `.`                          | Target repository directory to scan.                                                                                                                                              |
-| `--config <PATH>`       | `<TARGET>/trivy.yaml`        | Path to a Trivy configuration file. If omitted and `<TARGET>/trivy.yaml` exists as a file, it is passed automatically to every Trivy invocation.                                  |
-| `--ignorefile <PATH>`   | `<TARGET>/.trivyignore.yaml` | Path to a Trivy ignore file. If omitted and `<TARGET>/.trivyignore.yaml` exists as a file, it is passed automatically to every Trivy invocation.                                  |
-| `--severity <SEVERITY>` | _(from config / Trivy)_      | Comma-separated list of severities to include (for example `HIGH,CRITICAL` or `UNKNOWN,MEDIUM,HIGH,CRITICAL`), forwarded as `--severity` to Trivy.                                |
-| `--exit-code <CODE>`    | `1`                          | Exit code returned when unaccepted vulnerability or license findings are detected in any enabled scan tier.                                                                       |
-| `--repo-only`           | `false`                      | Run only Tier 1 (repository scan) and skip `.mise/locks/` toolchain sidecars and `--include-gobinary`. Conflicts with `--toolchain-only`.                                         |
-| `--toolchain-only`      | `false`                      | Run only Tier 2 (`.mise/locks/` sidecar lockfiles, plus Tier 3 if `--include-gobinary` is also set) and skip the Tier 1 repository root scan. Conflicts with `--repo-only`.       |
-| `--include-gobinary`    | `false`                      | Enable Tier 3: query active `mise` tool install directories via `mise ls --json` and scan each directory with `trivy rootfs --scanners vuln` (ignored when `--repo-only` is set). |
+| Argument / Flag             | Default                                        | Description                                                                                                                                                                        |
+| --------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `[TARGET]`                  | `.`                                            | Target repository directory to scan.                                                                                                                                               |
+| `-c, --config <PATH>`       | `<TARGET>/trivy.yaml`                          | Path to a Trivy configuration file. If omitted and `<TARGET>/trivy.yaml` exists as a file, it is passed automatically to every Trivy invocation.                                   |
+| `--ignorefile <PATH>`       | `<TARGET>/.trivyignore.yaml` or `.trivyignore` | Path to a Trivy ignore file. If omitted, `scan` checks `<TARGET>/.trivyignore.yaml` first and falls back to `<TARGET>/.trivyignore` if present as a file.                          |
+| `-s, --severity <SEVERITY>` | _(from config / Trivy)_                        | Comma-separated list of severities to include (for example `HIGH,CRITICAL` or `UNKNOWN,MEDIUM,HIGH,CRITICAL`), forwarded as `--severity` to Trivy.                                 |
+| `-q, --quiet`               | `false`                                        | Suppress `==> ...` tier progress headers and `==> Scan summary: ...` on `stderr`, and pass `--quiet` to underlying Trivy invocations.                                              |
+| `--ignore-unfixed`          | `false`                                        | Ignore unfixed vulnerabilities (forwarded as `--ignore-unfixed` to underlying Trivy invocations).                                                                                  |
+| `--scanners <SCANNERS>`     | `vuln,license`                                 | Comma-separated list of scanners for the Tier 1 repository scan (for example `vuln` or `vuln,license`). Tier 2 (`toolchain`) and Tier 3 (`gobinary`) always run `--scanners vuln`. |
+| `--exit-code <CODE>`        | `1`                                            | Exit code returned when unaccepted vulnerability or license findings are detected in any enabled scan tier.                                                                        |
+| `--repo-only`               | `false`                                        | Run only Tier 1 (repository scan) and skip `.mise/locks/` toolchain sidecars and `--include-gobinary`. Conflicts with `--toolchain-only`.                                          |
+| `--toolchain-only`          | `false`                                        | Run only Tier 2 (`.mise/locks/` sidecar lockfiles, plus Tier 3 if `--include-gobinary` is also set) and skip the Tier 1 repository root scan. Conflicts with `--repo-only`.        |
+| `--include-gobinary`        | `false`                                        | Enable Tier 3: query active `mise` tool install directories via `mise ls --json` and scan each directory with `trivy rootfs --scanners vuln` (ignored when `--repo-only` is set).  |
+| `-- <TRIVY_ARGS>...`        | _(none)_                                       | Additional arguments forwarded directly to underlying `trivy` invocations across all active tiers (for example `-- --skip-db-update --offline-scan`).                              |
 
 ### `version` / `--version`
 
@@ -331,25 +343,34 @@ inspects top-level `components[]`):
 
 ## Scanning Tiers & Configuration
 
-`trivy-plugin-mise scan` runs up to three distinct scanning tiers and prints a
-summary line (`==> Scan summary: repo=..., toolchain=..., gobinary=... -> ...`).
-If any enabled tier detects unaccepted findings, `scan` exits with `--exit-code`
-(default `1`).
+`trivy-plugin-mise scan` (or bare `trivy-plugin-mise` / `trivy mise`) runs up to
+three distinct scanning tiers. Tier progress headers (`==> ...`) and the final
+summary line (`==> Scan summary: repo=..., toolchain=..., gobinary=... -> ...`)
+are written to **`stderr`** so `stdout` stays clean for piped or
+machine-readable Trivy output, and are suppressed when `-q` / `--quiet` is
+passed. If any enabled tier detects unaccepted findings, `scan` exits with
+`--exit-code` (default `1`).
 
 ### The Three Scan Tiers
 
-| Tier               | Default State | Underlying Trivy Command                                                    | Scanners          | Purpose                                                                                                                                                                                                                     |
-| ------------------ | ------------- | --------------------------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1. `repo`**      | **Enabled**   | `trivy fs --scanners vuln,license --skip-dirs .mise/locks <TARGET>`         | `vuln`, `license` | Scans shipped repository manifests and lockfiles for both CVEs and license policy compliance. Skipped when `--toolchain-only` is passed.                                                                                    |
-| **2. `toolchain`** | **Enabled**   | `trivy fs --scanners vuln <materialized-sidecar-workspace>`                 | `vuln` only       | Verifies SHA-256 digests, materializes `.mise/locks/` (`aube-lock.yaml` -> `pnpm-lock.yaml`, `uv.lock`, etc.), and scans tool dependencies for CVEs. Skipped if no sidecars exist or `--repo-only` is passed.               |
-| **3. `gobinary`**  | **Opt-in**    | `trivy rootfs --scanners vuln <active-mise-install-path>` (per active tool) | `vuln` only       | Enabled with `--include-gobinary` (unless `--repo-only` is set). Runs `mise ls --json` in `<TARGET>` and scans every installed, active tool directory (catching Go stdlib/module CVEs compiled into prebuilt CLI binaries). |
+| Tier               | Default State | Underlying Trivy Command                                                    | Scanners                              | Purpose                                                                                                                                                                                                                     |
+| ------------------ | ------------- | --------------------------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1. `repo`**      | **Enabled**   | `trivy fs --scanners <SCANNERS> --skip-dirs .mise/locks <TARGET>`           | `vuln,license` (`--scanners` default) | Scans shipped repository manifests and lockfiles for both CVEs and license policy compliance (customizable via `--scanners`). Skipped when `--toolchain-only` is passed.                                                    |
+| **2. `toolchain`** | **Enabled**   | `trivy fs --scanners vuln <materialized-sidecar-workspace>`                 | `vuln` only                           | Verifies SHA-256 digests, materializes `.mise/locks/` (`aube-lock.yaml` -> `pnpm-lock.yaml`, `uv.lock`, etc.), and scans tool dependencies for CVEs. Skipped if no sidecars exist or `--repo-only` is passed.               |
+| **3. `gobinary`**  | **Opt-in**    | `trivy rootfs --scanners vuln <active-mise-install-path>` (per active tool) | `vuln` only                           | Enabled with `--include-gobinary` (unless `--repo-only` is set). Runs `mise ls --json` in `<TARGET>` and scans every installed, active tool directory (catching Go stdlib/module CVEs compiled into prebuilt CLI binaries). |
 
-### Automatic Discovery of `trivy.yaml` and `.trivyignore.yaml`
+### Automatic Discovery of `trivy.yaml`, `.trivyignore.yaml`, and `.trivyignore`
 
-Unless overridden via `--config <PATH>` or `--ignorefile <PATH>`,
-`trivy-plugin-mise scan` checks for `<TARGET>/trivy.yaml` and
-`<TARGET>/.trivyignore.yaml` and forwards `--config` and `--ignorefile` to every
-Trivy invocation across all active tiers.
+Unless overridden via `-c` / `--config <PATH>` or `--ignorefile <PATH>`,
+`trivy-plugin-mise scan` automatically discovers configuration and ignore files
+in `<TARGET>` and forwards them to every Trivy invocation across all active
+tiers:
+
+- **Config file (`-c, --config`):** Uses `<TARGET>/trivy.yaml` when it exists as
+  a file.
+- **Ignore file (`--ignorefile`):** Checks `<TARGET>/.trivyignore.yaml` first,
+  and falls back to `<TARGET>/.trivyignore` when `.trivyignore.yaml` is absent
+  and `<TARGET>/.trivyignore` exists as a file.
 
 #### Example `trivy.yaml`
 

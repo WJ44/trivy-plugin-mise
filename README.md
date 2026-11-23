@@ -78,24 +78,27 @@ trivy-plugin-mise --help
 
 ## Quickstart
 
-### Generate a CycloneDX 1.7 SBOM
-
-Generate a product SBOM with the `mise` toolchain recorded under `formulation[]`
-(default `--mode formulation`):
+### Scan for Vulnerabilities & Licenses
 
 Running `trivy mise` (or `trivy-plugin-mise`) with no subcommand executes `scan`
-by default, matching standard Trivy plugin ergonomics:
+by default, matching standard Trivy plugin ergonomics. It runs the two-tier scan
+(repository `vuln,license` + `.mise/locks/` toolchain `vuln`), automatically
+discovering `<target>/trivy.yaml` and `<target>/.trivyignore.yaml` (or falling
+back to `<target>/.trivyignore`):
 
 ```bash
 # Default scan (equivalent to `trivy mise scan .`)
 trivy mise
+trivy-plugin-mise
+
+# Custom config, severity filter, quiet mode, ignore-unfixed, scanners, and raw Trivy args
 trivy mise /path/to/repo -c trivy.yaml -s HIGH,CRITICAL -q --ignore-unfixed
 trivy mise --scanners vuln -- --skip-db-update --offline-scan
 
-# Explicit subcommands
-trivy mise scan --help
-trivy mise sbom --output sbom.cdx.json -- --skip-dirs vendor
-trivy mise version
+# Include active `mise` tool install directories (`trivy rootfs --scanners vuln`) or scope to a tier
+trivy mise scan --include-gobinary
+trivy-plugin-mise scan --repo-only
+trivy-plugin-mise scan --toolchain-only --severity HIGH,CRITICAL
 ```
 
 - **Ignore file auto-discovery:** When `--ignorefile` is omitted, `scan` checks
@@ -106,11 +109,16 @@ trivy mise version
   piped or machine-readable Trivy output, and are suppressed when `-q`/`--quiet`
   is set.
 
-### Development
+### Generate a CycloneDX 1.7 SBOM
+
+Generate a product SBOM with the `mise` toolchain recorded under `formulation[]`
+(default `--mode formulation`), optionally forwarding extra flags to `trivy fs`
+after `--`:
 
 ```bash
 # Via Trivy plugin
 trivy mise sbom --output sbom.cdx.json
+trivy mise sbom --output sbom.cdx.json -- --skip-dirs vendor
 
 # Or via standalone CLI
 trivy-plugin-mise sbom --output sbom.cdx.json
@@ -123,29 +131,6 @@ platform triple:
 trivy mise sbom --mode components --platform linux-x64 --output sbom-tools.cdx.json
 # Or:
 trivy-plugin-mise sbom --mode components --platform linux-x64 --output sbom-tools.cdx.json
-```
-
-### Scan for Vulnerabilities & Licenses
-
-Run the default two-tier scan (repository `vuln,license` + `.mise/locks/`
-toolchain `vuln`), automatically using `<target>/trivy.yaml` and
-`<target>/.trivyignore.yaml` when present:
-
-```bash
-# Via Trivy plugin
-trivy mise scan
-
-# Or via standalone CLI
-trivy-plugin-mise scan
-```
-
-Include active `mise` tool install directories (`trivy rootfs --scanners vuln`)
-or scope to a specific tier:
-
-```bash
-trivy mise scan --include-gobinary
-trivy-plugin-mise scan --repo-only
-trivy-plugin-mise scan --toolchain-only --severity HIGH,CRITICAL
 ```
 
 See [`docs/usage.md`](docs/usage.md) for complete documentation.
