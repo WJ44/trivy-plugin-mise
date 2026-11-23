@@ -2,8 +2,9 @@
 
 - **Status:** Active
 - **Finality:** Standard
-- **Scope:** `.github/ISSUE_TEMPLATE/`, `agent-context/harness/issues.md`
-- **Date:** 2026-11-08
+- **Scope:** `.github/ISSUE_TEMPLATE/`, `agent-context/harness/issues.md`,
+  `agent-context/harness/issue-refinement.md`
+- **Date:** 2026-11-18
 
 ## Context
 
@@ -20,7 +21,10 @@ Markdown `.md` templates, not YAML issue forms).
 Use Markdown issue templates in `.github/ISSUE_TEMPLATE/` for bug reports,
 feature/task requests, design decisions, and autonomous agent proposals, and
 gate autonomous proposals behind an explicit human approval step (`approved`
-label plus `- [x] Approved to proceed` checkbox).
+label plus `- [x] Approved to proceed` checkbox). When rough issues
+(`needs-refinement`) or proposals (`proposal`) need interactive scoping and
+design trade-off decisions, use the dedicated human-in-the-loop refinement
+workflow in `agent-context/harness/issue-refinement.md`.
 
 ## Options Considered
 
@@ -34,4 +38,7 @@ label plus `- [x] Approved to proceed` checkbox).
 
 Templates work uniformly across the web UI and `gh` CLI. Acceptance criteria
 stay focused on task-specific verification, bounded scope sections prevent agent
-drift, and autonomous agent proposals wait for explicit human approval.
+drift, and autonomous agent proposals wait for explicit human approval. Keeping
+interactive refinement instructions in
+`agent-context/harness/issue-refinement.md` avoids loading refinement prompts
+during routine issue creation or implementation.

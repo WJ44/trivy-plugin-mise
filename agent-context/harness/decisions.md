@@ -30,6 +30,31 @@ better options appear. Knowing both the options considered and the commitment
 level prevents two opposite failure modes: treating a hasty default as sacred,
 or re-litigating a settled foundational rule.
 
+## Keeping decision records high-level
+
+Decision records capture **rationale and commitment**, not how a tool is
+implemented or operated. Keep every record concise and strictly scoped:
+
+- **Belongs in `decisions/`:** Problem context and drivers, the chosen approach
+  stated concisely, options actually evaluated with high-level trade-offs,
+  resulting invariants or consequences, and `Finality`.
+- **Does not belong in `decisions/`:** Low-level implementation mechanics,
+  parser or library internals (such as AST node tags or internal function
+  names), configuration or code snippets, exhaustive CLI flag tables, and usage
+  guides.
+
+Put operational and implementation details in their proper home instead:
+
+- **Implementation mechanics & CLI flag syntax:** Code comments, docstrings, and
+  CLI `--help` output.
+- **Human-focused usage guides, workflows, & conceptual overviews:**
+  [`docs/`](../../docs/) (project-specific) or
+  [`docs/harness/`](../../docs/harness/) (baseline harness tools), linked from
+  [`README.md`](../../README.md).
+- **Agent operational rules & workflows:** [`agent-context/`](..)
+  (project-specific) or [`agent-context/harness/`](.) (baseline harness rules),
+  linked from [`AGENTS.md`](../../AGENTS.md).
+
 ## Template
 
 Every file in [`decisions/`](../../decisions/) is named `NNN-<slug>.md`
@@ -82,6 +107,17 @@ it was evaluated and how open it is to reconsideration:
 | **`Standard`**    | Trade-offs were evaluated and the choice is settled, but remains open to change if new information, requirements, or options arise. | Follow it by default. Propose reconsidering only when concrete new information, unconsidered options, or changed constraints justify revisiting it.                        |
 | **`Locked`**      | Foundational principle or deliberate constraint established by the human maintainer.                                                | Treat as a hard invariant. Do not propose replacing or bypassing it unless explicitly asked by a human.                                                                    |
 
+When a single Decision Record covers sub-decisions with different commitment
+levels, state each level explicitly in the individual record's `- **Finality:**`
+header (for example,
+`Standard (dispatcher pattern; default open-ended task filter is Provisional)`).
+In the index tables ([`decisions/README.md`](../../decisions/README.md) and
+[`decisions/harness/README.md`](../../decisions/harness/README.md)), keep the
+`Finality` cell to a single compact token (`Provisional`, `Standard`, or
+`Locked`) representing the record's primary commitment level so adding or
+updating rows does not widen the column and trigger full-table Prettier
+re-padding.
+
 ### Options Considered (exhaustive of what was evaluated)
 
 The `Options Considered` section must be an **exhaustive list of the options
@@ -124,19 +160,95 @@ Create a decision record when:
      [`decisions/harness/README.md`](../../decisions/harness/README.md).
      Downstream projects should not edit `decisions/harness/` directly—record a
      project decision in `decisions/` instead.
-2. Pick the next sequential number `NNN` in the target directory.
-3. Create `<target>/NNN-<slug>.md` using the template above. Keep it concise and
+2. Pick the next sequential number `NNN` in the target directory. Check both the
+   existing files in `<target>/` and open PRs
+   (`gh pr list --state open --limit 100 --json number,files`) so concurrent PRs
+   do not claim the same `NNN` up front.
+3. Create `<target>/NNN-<slug>.md` (or `<target>/NNN-<slug>-evaluation.md` for
+   standalone evaluation records) using the template above. Keep it concise and
    high-signal.
-4. Add an entry to the index table in `<target>/README.md`.
-5. If the decision establishes ongoing operational rules for agents, update the
-   relevant reference file in [`agent-context/`](..) as well.
+4. Add an unpadded entry (`| [NNN](...) | ... |`) to the
+   `<!-- prettier-ignore -->` index table in `<target>/README.md` using a
+   single-token `Finality` value (`Provisional`, `Standard`, or `Locked`). Keep
+   `<!-- prettier-ignore -->` above the table and avoid padding cells to column
+   widths so editing or appending one row touches only that single line.
+5. Update any companion docs needed—without duplicating details in the decision
+   record:
+   - Ongoing operational rules for agents go in [`agent-context/`](..) (or
+     [`agent-context/harness/`](.)).
+   - Human-focused usage guides or conceptual overviews go in
+     [`docs/`](../../docs/) (or [`docs/harness/`](../../docs/harness/)) and are
+     linked from [`README.md`](../../README.md).
 
-### Superseding or updating an existing decision
+### Updating, evaluating, or superseding a decision
 
-- **Minor clarification or new option evaluated without changing the outcome:**
-  Update the existing record in place (add the newly evaluated option to
-  `Options Considered`, adjust `Finality` if appropriate, and update `Date`).
-- **Changing the decision:** Create a new record `MMM-<slug>.md` referencing the
-  old one in `Context`, set the old record's `Status` to
-  `Superseded by [MMM](MMM-slug.md)`, and update both rows in
-  [`decisions/README.md`](../../decisions/README.md).
+Choose among three patterns based on whether the existing decision's core choice
+stands and whether the change closes a dedicated evaluation issue:
+
+1. **In-place refinement or extension of an active decision:** Use when
+   clarifying, extending, or adjusting the scope of an active decision without
+   reversing or replacing its core choice—or when adding a newly evaluated
+   option surfaced while revisiting that record (for example, extending `ruff`
+   to formatting in [`009`](../../decisions/harness/009-ruff-for-python.md),
+   adding interactive refinement in
+   [`013`](../../decisions/harness/013-issue-templates-and-autonomous-proposals.md),
+   broadening CI triggers in
+   [`015`](../../decisions/harness/015-ci-pipeline.md), adding bounded auto-fix
+   in [`019`](../../decisions/harness/019-agent-pr-review-process.md), or adding
+   stacked PR orchestration in
+   [`022`](../../decisions/harness/022-multi-issue-orchestration.md)). Update
+   the existing record in place (`Context`, `Decision`, `Options Considered`,
+   `Scope`, `Consequences`, `Finality` if appropriate, and `Date`), and sync its
+   row in the corresponding index
+   ([`decisions/README.md`](../../decisions/README.md) or
+   [`decisions/harness/README.md`](../../decisions/harness/README.md)) while
+   keeping the table's `Finality` cell to a single token.
+2. **Standalone numbered evaluation record (`NNN-<slug>-evaluation.md`):** Use
+   when closing a dedicated evaluation or `decision`-labeled issue whose outcome
+   retains the existing baseline tool, workflow, or convention without adopting
+   the evaluated alternative (for example,
+   [`010-markdownlint-evaluation.md`](../../decisions/harness/010-markdownlint-evaluation.md)
+   or
+   [`030-issue-types-and-fields-evaluation.md`](../../decisions/harness/030-issue-types-and-fields-evaluation.md)
+   retaining
+   [`016`](../../decisions/harness/016-issue-label-taxonomy-and-sync.md)).
+   Create a new sequential record (`NNN-<slug>-evaluation.md`) in the
+   appropriate directory (`decisions/` or `decisions/harness/`) with
+   `Status: Active`, reference the retained decision(s) without marking them
+   `Superseded`, and add the new row to the corresponding index.
+3. **Superseding a reversed or replaced decision (`MMM-<slug>.md`):** Use when
+   reversing or replacing the core choice of an earlier decision rather than
+   refining it in place. Create a new sequential record (`MMM-<slug>.md`) in the
+   appropriate directory (`decisions/` or `decisions/harness/`) referencing the
+   old record in `Context`, set the old record's `Status` to
+   `Superseded by [MMM](MMM-slug.md)`, and update both rows in the corresponding
+   index ([`decisions/README.md`](../../decisions/README.md) or
+   [`decisions/harness/README.md`](../../decisions/harness/README.md)).
+
+### Resolving `NNN` collisions during `main`-sync
+
+If two concurrent branches add a decision record in the same directory with the
+same sequential number `NNN`:
+
+1. **Detect the collision against `origin/main`:** During a `main`-sync or
+   rebase pass (`git fetch origin main && git merge origin/main`), check whether
+   `origin/main` introduced a decision record with your `NNN` prefix in
+   `decisions/` or `decisions/harness/` (also reported by
+   `bin/validate-decisions.py` as `duplicate decision ID 'NNN'`).
+2. **Pick the next unused `NNN`:** Check both the merged `origin/main` files in
+   the target directory and open PRs
+   (`gh pr list --state open --limit 100 --json number,files`) to choose the
+   next unused sequential ID `MMM`.
+3. **Renumber every reference in your branch:**
+   - Rename the record (`git mv <target>/NNN-<slug>.md <target>/MMM-<slug>.md`).
+   - Update the `# MMM: <Title>` heading (and any self-references) inside the
+     renamed file.
+   - If your PR supersedes an older decision, update that record's `Status:`
+     bullet (and index row) to `Superseded by [MMM](MMM-<slug>.md)`.
+   - Update the row in `<target>/README.md` to `[MMM](MMM-<slug>.md)` in
+     numerical order using an unpadded `| ... |` row under
+     `<!-- prettier-ignore -->`.
+   - Update any references to `NNN` in companion docs, tests, or the PR
+     description, then re-run `mise x -- lefthook run format-check` and
+     `mise x -- lefthook run lint-check` to confirm `bin/validate-decisions.py`,
+     `rumdl`, and Prettier all pass.

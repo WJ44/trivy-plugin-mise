@@ -70,6 +70,15 @@ fi
 REL_PATH="${CANONICAL_PATH#"$REPO_ROOT/"}"
 cd "$REPO_ROOT"
 
+# Skip formatting and linting while the file still has unresolved merge conflicts:
+# formatters (e.g. Prettier on Markdown) corrupt remaining conflict markers and
+# linters produce noisy syntax errors mid-resolution.
+if [[ -n "$(git ls-files --unmerged -- ":(literal)$REL_PATH" 2>/dev/null || true)" ]] ||
+  grep -qIE -- '^(<{7}|={7}|>{7})([[:space:]]|$)' "$REL_PATH"; then
+  echo "{}"
+  exit 0
+fi
+
 LINT_OUTPUT=""
 if ! FORMAT_OUT=$(lefthook run format --no-auto-install --file "$REL_PATH" 2>&1); then
   LINT_OUTPUT="$FORMAT_OUT"

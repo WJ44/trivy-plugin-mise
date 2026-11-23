@@ -6,7 +6,7 @@ This document outlines git conventions for branch naming and commit messages.
 
 Branches use a prefix matching the [allowed commit types](#allowed-types) below:
 
-```
+```text
 <type>/<name>
 ```
 
@@ -28,7 +28,7 @@ Commit messages are validated at commit time via a git `commit-msg` hook using
 
 ### Format
 
-```
+```text
 <type>[optional scope]: <description>
 
 [optional body]
@@ -67,14 +67,35 @@ e.g. `feat(setup): ...` or `fix(token-server): ...`.
 ### Body (optional)
 
 Separated from the header by a blank line. Explains _why_ the change was made
-and context that isn't obvious from the diff alone.
+and context that isn't obvious from the diff alone. Every body line must not
+exceed 100 characters (`body-max-line-length` in
+`@commitlint/config-conventional`), so wrap paragraphs and bullet items within
+that limit.
+
+When passing a multi-line commit message from the CLI, prefer
+`git commit -F - <<'EOF'` over repeated `-m` flags so blank lines (including
+`footer-leading-blank`) and 100-character line wrapping stay exact:
+
+```bash
+git commit -F - <<'EOF'
+feat(scope): concise imperative subject
+
+Wrap body paragraphs and bullet items within 100 characters per line so
+commitlint's body-max-line-length rule passes.
+
+Closes #123
+EOF
+```
 
 ### Footers (optional)
 
-Separated from the body by a blank line. Used for:
+Separated from the body by a blank line. Every footer line must not exceed 100
+characters (`footer-max-line-length` in `@commitlint/config-conventional`). Used
+for:
 
 - Issue references: `Refs #1`, `Closes #2`, `Fixes #3`.
-- Breaking change description: `BREAKING CHANGE: <explanation>`.
+- Breaking change description: `BREAKING CHANGE: <explanation>` (wrap long
+  explanations across lines of at most 100 characters).
 
 ### Breaking changes
 
@@ -85,4 +106,5 @@ Always do both:
    views like `git log --oneline` and PR titles.
 2. **Footer explanation**: Add a `BREAKING CHANGE: <explanation>` footer
    explaining what broke and how to migrate, providing the context changelog
-   generators and consumers need.
+   generators, release tools, and downstream consumers need (include concrete
+   migration steps whenever manual action is required).
