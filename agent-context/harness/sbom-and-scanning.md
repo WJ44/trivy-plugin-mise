@@ -93,14 +93,26 @@ licenses:
 
 ### Required Fields for Exceptions
 
-1. **`id`**: The CVE identifier (e.g. `CVE-2026-1234`) or SPDX license
-   identifier (e.g. `MPL-2.0`).
-2. **`statement`**: A concrete rationale explaining why the risk is accepted,
-   mitigated by compensating controls, or tracked for upstream resolution.
-3. **`expired_at`** _(recommended)_: An ISO 8601 date (`YYYY-MM-DD`) after which
-   the exception expires, forcing re-evaluation.
-4. **`paths`** _(optional)_: Scopes the exception to specific manifest or lock
-   files.
+1. **`id`** _(required)_: The CVE identifier (e.g. `CVE-2026-1234`), SPDX
+   license identifier (e.g. `MPL-2.0`), misconfiguration ID, or secret rule ID.
+2. **`statement`** _(required)_: A non-empty rationale explaining why the risk
+   is accepted, mitigated by compensating controls, or tracked for upstream
+   resolution.
+3. **`expired_at`** _(recommended)_: An **unquoted** YAML date (`YYYY-MM-DD`) or
+   RFC3339 timestamp (`2026-12-31T00:00:00Z`) after which the exception expires,
+   forcing re-evaluation. Do not quote plain `YYYY-MM-DD` dates, as Trivy's Go
+   YAML parser rejects quoted date-only strings at scan time.
+4. **`paths`** _(optional)_: List of file paths or globs scoping the exception.
+5. **`purls`** _(optional, `vulnerabilities` only)_: List of Package URLs
+   scoping a vulnerability exception to specific packages.
+
+Because Trivy parses `.trivyignore.yaml` permissively without requiring a
+rationale, `lefthook run lint` / `lefthook run lint-check` runs
+`bin/validate-trivyignore.yq` via `yq` (including via `hooks/post-edit`,
+`pre-commit`, and CI) to enforce our added rules: every entry must be a mapping
+with a non-empty `id` and non-empty `statement`. Structural YAML types,
+duplicate keys, and `expired_at` date formats are left to Trivy itself
+(`mise run scan`).
 
 ## CI Automation
 
@@ -109,7 +121,8 @@ Scanning is automated in `.github/workflows/ci.yml`:
 - **Triggers**: Runs on pushes to `main`, pull requests, and a daily scheduled
   cron trigger (`0 6 * * *`) so newly disclosed CVEs are detected even when no
   code changes occur.
-- **Artifacts**: Generates `sbom.cdx.json` and uploads it as a workflow artifact
-  via `actions/upload-artifact` (pinned by commit SHA digest).
+- **Artifacts**: Generates `sbom.cdx.json` and uploads it directly as an
+  unarchived single-file workflow artifact (`archive: false`) via
+  `actions/upload-artifact` (pinned by commit SHA digest).
 - **Quality gate**: Scans the filesystem using repository configuration; any
   unaccepted vulnerability or license failure blocks the pipeline.

@@ -3,6 +3,7 @@
   "permissions": {
     "defaultMode": "bypassPermissions"
   },
+  "enabledMcpjsonServers": ["context7"],
   "hooks": {
     "PostToolUse": [
       {

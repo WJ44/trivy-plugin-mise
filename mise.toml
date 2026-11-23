@@ -3,14 +3,19 @@
 
 [tools]
 node = "26.13.1"
-"npm:prettier" = "3.9.10"
+"npm:prettier" = "3.10.1"
 shfmt = "3.14.1"
 lefthook = "2.2.2"
-tombi = "1.11.2"
+tombi = "1.11.3"
 shellcheck = "0.11.0"
-ruff = "0.17.4"
+ruff = "0.17.6"
 "npm:@commitlint/cli" = "21.2.4"
 trivy = "0.76.2"
+uv = "0.13.9"
+ripgrep = "16.0.0"
+yq = "4.54.3"
+"github:newren/git-filter-repo" = "2.47.0"
+"aqua:rvben/rumdl" = "0.3.5"
 rust = { version = "1.100.0", components = ["rustfmt", "clippy"] }
 
 [tasks.sbom]
@@ -20,3 +25,7 @@ run = "bin/mise-sbom"
 [tasks.scan]
 description = "Scan repository and toolchain for vulnerabilities and licenses"
 run = "bin/mise-sbom scan"
+
+[tasks.test]
+description = "Run Rust unit and integration tests"
+run = "cargo test --locked"
