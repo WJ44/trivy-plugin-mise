@@ -70,6 +70,14 @@ pub struct ScanArgs {
     /// Also scan active mise tool install directories via `trivy rootfs --scanners vuln`.
     #[arg(long)]
     pub include_gobinary: bool,
+
+    /// Scan only the repository target and skip `.mise/locks/` (and `--include-gobinary`).
+    #[arg(long, conflicts_with = "toolchain_only")]
+    pub repo_only: bool,
+
+    /// Scan only `.mise/locks/` sidecar lockfiles (plus `--include-gobinary` if requested) and skip the repository root scan.
+    #[arg(long, conflicts_with = "repo_only")]
+    pub toolchain_only: bool,
 }
 
 #[cfg(test)]
@@ -147,8 +155,63 @@ mod tests {
                 assert_eq!(args.severity.as_deref(), Some("HIGH,CRITICAL"));
                 assert_eq!(args.exit_code, 2);
                 assert!(args.include_gobinary);
+                assert!(!args.repo_only);
+                assert!(!args.toolchain_only);
             }
             other => panic!("expected Scan command, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_scan_tier_flags() {
+        let repo_only = Cli::try_parse_from(["trivy-plugin-mise", "scan", "--repo-only"])
+            .expect("--repo-only should parse");
+        match repo_only.command {
+            Commands::Scan(args) => {
+                assert!(args.repo_only);
+                assert!(!args.toolchain_only);
+            }
+            other => panic!("expected Scan command, got {other:?}"),
+        }
+
+        let toolchain_only = Cli::try_parse_from([
+            "trivy-plugin-mise",
+            "scan",
+            "--toolchain-only",
+            "--include-gobinary",
+        ])
+        .expect("--toolchain-only --include-gobinary should parse");
+        match toolchain_only.command {
+            Commands::Scan(args) => {
+                assert!(!args.repo_only);
+                assert!(args.toolchain_only);
+                assert!(args.include_gobinary);
+            }
+            other => panic!("expected Scan command, got {other:?}"),
+        }
+
+        let repo_with_gobinary = Cli::try_parse_from([
+            "trivy-plugin-mise",
+            "scan",
+            "--repo-only",
+            "--include-gobinary",
+        ])
+        .expect("--repo-only --include-gobinary should parse");
+        match repo_with_gobinary.command {
+            Commands::Scan(args) => {
+                assert!(args.repo_only);
+                assert!(args.include_gobinary);
+            }
+            other => panic!("expected Scan command, got {other:?}"),
+        }
+
+        let conflict = Cli::try_parse_from([
+            "trivy-plugin-mise",
+            "scan",
+            "--repo-only",
+            "--toolchain-only",
+        ])
+        .expect_err("--repo-only and --toolchain-only must conflict");
+        assert_eq!(conflict.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 }

@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -14,6 +15,9 @@ use crate::sidecar::{SidecarError, SidecarOptions, materialize_sidecars};
 pub enum ScanError {
     #[error("scan target `{path}` does not exist")]
     InvalidTarget { path: String },
+
+    #[error("cannot combine `--repo-only` and `--toolchain-only`")]
+    ConflictingTiers,
 
     #[error(transparent)]
     MiseLock(#[from] MiseLockError),
@@ -53,6 +57,8 @@ pub struct ScanOptions {
     pub severity: Option<String>,
     pub exit_code: i32,
     pub include_gobinary: bool,
+    pub repo_only: bool,
+    pub toolchain_only: bool,
 }
 
 impl From<ScanArgs> for ScanOptions {
@@ -64,6 +70,8 @@ impl From<ScanArgs> for ScanOptions {
             severity: args.severity,
             exit_code: args.exit_code,
             include_gobinary: args.include_gobinary,
+            repo_only: args.repo_only,
+            toolchain_only: args.toolchain_only,
         }
     }
 }
@@ -77,6 +85,8 @@ impl From<&ScanArgs> for ScanOptions {
             severity: args.severity.clone(),
             exit_code: args.exit_code,
             include_gobinary: args.include_gobinary,
+            repo_only: args.repo_only,
+            toolchain_only: args.toolchain_only,
         }
     }
 }
@@ -111,6 +121,10 @@ struct MiseToolEntry {
 
 /// Runs repository, `.mise/locks/` toolchain, and optional binary scans via Trivy.
 pub fn run_scan(options: &ScanOptions) -> Result<ScanOutcome, ScanError> {
+    if options.repo_only && options.toolchain_only {
+        return Err(ScanError::ConflictingTiers);
+    }
+
     if !options.target.exists() {
         return Err(ScanError::InvalidTarget {
             path: options.target.display().to_string(),
@@ -130,41 +144,70 @@ pub fn run_scan(options: &ScanOptions) -> Result<ScanOutcome, ScanError> {
         exit_code: options.exit_code,
     };
 
-    let repo_findings = run_trivy_scan("fs", "vuln,license", &options.target, &ctx)?;
+    let run_repo = !options.toolchain_only;
+    let run_toolchain = !options.repo_only;
+    let run_gobinary = !options.repo_only && options.include_gobinary;
 
-    let mise_lock_path = options.target.join("mise.lock");
-    let lock = if mise_lock_path.is_file() {
-        Some(MiseLock::from_path(&mise_lock_path)?)
-    } else {
-        None
-    };
-
-    let workspace =
-        materialize_sidecars(&options.target, lock.as_ref(), &SidecarOptions::default())?;
-    let has_toolchain_files = workspace
-        .entries()
-        .iter()
-        .any(|entry| !entry.materialized_files.is_empty());
-
-    let toolchain_findings = if has_toolchain_files {
-        run_trivy_scan("fs", "vuln", workspace.path(), &ctx)?
+    let repo_findings = if run_repo {
+        print_tier_line(&format!(
+            "Repository scan (trivy fs --scanners vuln,license): {}",
+            options.target.display()
+        ))?;
+        run_trivy_scan(
+            "fs",
+            "vuln,license",
+            &options.target,
+            &[".mise/locks"],
+            &ctx,
+        )?
     } else {
         false
     };
 
-    workspace.close().map_err(|source| ScanError::Io {
-        path: std::env::temp_dir().display().to_string(),
-        source,
-    })?;
+    let (toolchain_findings, has_toolchain_files) = if run_toolchain {
+        let mise_lock_path = options.target.join("mise.lock");
+        let lock = if mise_lock_path.is_file() {
+            Some(MiseLock::from_path(&mise_lock_path)?)
+        } else {
+            None
+        };
+
+        let workspace =
+            materialize_sidecars(&options.target, lock.as_ref(), &SidecarOptions::default())?;
+        let has_files = workspace
+            .entries()
+            .iter()
+            .any(|entry| !entry.materialized_files.is_empty());
+
+        let findings = if has_files {
+            print_tier_line("Toolchain sidecar scan (.mise/locks/, trivy fs --scanners vuln)")?;
+            run_trivy_scan("fs", "vuln", workspace.path(), &[], &ctx)?
+        } else {
+            false
+        };
+
+        workspace.close().map_err(|source| ScanError::Io {
+            path: std::env::temp_dir().display().to_string(),
+            source,
+        })?;
+
+        (findings, has_files)
+    } else {
+        (false, false)
+    };
 
     let mut gobinary_findings = false;
     let mut scanned_gobinary_paths = 0;
 
-    if options.include_gobinary {
+    if run_gobinary {
         let install_paths = discover_active_mise_install_paths(&options.target)?;
         scanned_gobinary_paths = install_paths.len();
         for install_path in install_paths {
-            if run_trivy_scan("rootfs", "vuln", &install_path, &ctx)? {
+            print_tier_line(&format!(
+                "Binary toolchain scan (--include-gobinary, trivy rootfs --scanners vuln): {}",
+                install_path.display()
+            ))?;
+            if run_trivy_scan("rootfs", "vuln", &install_path, &[], &ctx)? {
                 gobinary_findings = true;
             }
         }
@@ -176,6 +219,20 @@ pub fn run_scan(options: &ScanOptions) -> Result<ScanOutcome, ScanError> {
     } else {
         0
     };
+
+    let repo_status = tier_status(run_repo, true, repo_findings);
+    let toolchain_status = tier_status(run_toolchain, has_toolchain_files, toolchain_findings);
+    let gobinary_status =
+        format_gobinary_status(run_gobinary, scanned_gobinary_paths, gobinary_findings);
+    let overall_status = if findings_detected {
+        format!("findings detected (exit code {exit_code})")
+    } else {
+        "clean (exit code 0)".to_string()
+    };
+
+    print_tier_line(&format!(
+        "Scan summary: repo={repo_status}, toolchain={toolchain_status}, gobinary={gobinary_status} -> {overall_status}"
+    ))?;
 
     Ok(ScanOutcome {
         findings_detected,
@@ -228,6 +285,7 @@ fn run_trivy_scan(
     subcommand: &str,
     scanners: &str,
     target: &Path,
+    skip_dirs: &[&str],
     ctx: &TrivyRunContext,
 ) -> Result<bool, ScanError> {
     let exit_code_str = ctx.exit_code.to_string();
@@ -239,6 +297,10 @@ fn run_trivy_scan(
         "--exit-code",
         &exit_code_str,
     ]);
+
+    for dir in skip_dirs {
+        cmd.args(["--skip-dirs", dir]);
+    }
 
     if let Some(config) = &ctx.config {
         cmd.arg("--config").arg(config);
@@ -269,6 +331,42 @@ fn run_trivy_scan(
 
 fn existing_file(path: PathBuf) -> Option<PathBuf> {
     path.is_file().then_some(path)
+}
+
+fn print_tier_line(message: &str) -> Result<(), ScanError> {
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "==> {message}").map_err(|source| ScanError::Io {
+        path: "<stdout>".to_string(),
+        source,
+    })?;
+    stdout.flush().map_err(|source| ScanError::Io {
+        path: "<stdout>".to_string(),
+        source,
+    })
+}
+
+fn tier_status(enabled: bool, had_targets: bool, findings: bool) -> &'static str {
+    if !enabled {
+        "skipped"
+    } else if !had_targets {
+        "none"
+    } else if findings {
+        "findings"
+    } else {
+        "clean"
+    }
+}
+
+fn format_gobinary_status(enabled: bool, scanned_paths: usize, findings: bool) -> String {
+    if !enabled {
+        return "skipped".to_string();
+    }
+    if scanned_paths == 0 {
+        return "none".to_string();
+    }
+    let state = if findings { "findings" } else { "clean" };
+    let noun = if scanned_paths == 1 { "path" } else { "paths" };
+    format!("{state} ({scanned_paths} {noun})")
 }
 
 #[cfg(test)]
@@ -313,5 +411,25 @@ mod tests {
 
         let paths = parse_active_mise_install_paths(payload.to_string().as_bytes()).unwrap();
         assert_eq!(paths, vec![active_dir.path().to_path_buf()]);
+    }
+
+    #[test]
+    fn rejects_conflicting_tier_flags() {
+        let tmp = TempDir::new().unwrap();
+        let options = ScanOptions {
+            target: tmp.path().to_path_buf(),
+            config: None,
+            ignorefile: None,
+            severity: None,
+            exit_code: 1,
+            include_gobinary: false,
+            repo_only: true,
+            toolchain_only: true,
+        };
+
+        assert!(matches!(
+            run_scan(&options),
+            Err(ScanError::ConflictingTiers)
+        ));
     }
 }
