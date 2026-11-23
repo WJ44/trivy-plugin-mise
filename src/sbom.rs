@@ -17,6 +17,10 @@ use crate::sidecar::{SidecarError, SidecarOptions, extract_sidecar_json, run_tri
 const CYCLONEDX_1_7_SCHEMA: &str = "http://cyclonedx.org/schema/bom-1.7.schema.json";
 const CYCLONEDX_SPEC_VERSION: &str = "1.7";
 const MISE_TOOLCHAIN_REF: &str = "mise-toolchain";
+const MISE_TOOLCHAIN_WORKFLOW_REF: &str = "workflow:mise-toolchain";
+const MISE_TOOLCHAIN_WORKFLOW_NAME: &str = "mise development and build toolchain";
+const MISE_TOOLCHAIN_WORKFLOW_DESCRIPTION: &str =
+    "Deterministic development and build toolchain pinned in mise.toml and locked in mise.lock";
 
 /// Output mode for `trivy-plugin-mise sbom`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
@@ -94,11 +98,10 @@ pub fn generate_sbom(project_root: &Path, options: &SbomOptions) -> Result<Value
         },
     )?;
 
-    let include_dependencies = options.mode == SbomMode::Components;
-    let merged = merge_toolchain_bom(&mise_components, &sidecar_json, include_dependencies)?;
+    let merged = merge_toolchain_bom(&mise_components, &sidecar_json)?;
 
     match options.mode {
-        SbomMode::Formulation => build_formulation_bom(project_root, merged.components),
+        SbomMode::Formulation => build_formulation_bom(project_root, merged),
         SbomMode::Components => build_components_bom(project_root, merged),
     }
 }
@@ -145,7 +148,6 @@ struct MergedToolchain {
 fn merge_toolchain_bom(
     mise_components: &[CycloneDxComponent],
     sidecar_json: &Value,
-    include_dependencies: bool,
 ) -> Result<MergedToolchain, SbomError> {
     let mut components = Vec::with_capacity(mise_components.len());
     let mut seen_refs = HashSet::new();
@@ -220,13 +222,6 @@ fn merge_toolchain_bom(
         components.push(comp);
     }
 
-    if !include_dependencies {
-        return Ok(MergedToolchain {
-            components,
-            dependencies: Vec::new(),
-        });
-    }
-
     let mut dep_edges: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut has_incoming = HashSet::new();
 
@@ -280,11 +275,13 @@ fn merge_toolchain_bom(
     })
 }
 
-fn build_formulation_bom(
-    project_root: &Path,
-    toolchain_components: Vec<Value>,
-) -> Result<Value, SbomError> {
+fn build_formulation_bom(project_root: &Path, merged: MergedToolchain) -> Result<Value, SbomError> {
     let mut base = run_trivy_fs_cyclonedx(project_root, &[".mise/locks"])?;
+    apply_formulation_toolchain(&mut base, merged)?;
+    Ok(base)
+}
+
+fn apply_formulation_toolchain(base: &mut Value, merged: MergedToolchain) -> Result<(), SbomError> {
     let obj = base.as_object_mut().ok_or_else(|| {
         SbomError::InvalidBomStructure("Trivy CycloneDX output is not a JSON object".to_string())
     })?;
@@ -298,10 +295,19 @@ fn build_formulation_bom(
         Value::String(CYCLONEDX_SPEC_VERSION.to_string()),
     );
 
-    if !toolchain_components.is_empty() {
+    if !merged.components.is_empty() {
         let formula = json!({
             "bom-ref": MISE_TOOLCHAIN_REF,
-            "components": toolchain_components,
+            "components": merged.components,
+            "workflows": [
+                {
+                    "bom-ref": MISE_TOOLCHAIN_WORKFLOW_REF,
+                    "uid": MISE_TOOLCHAIN_REF,
+                    "name": MISE_TOOLCHAIN_WORKFLOW_NAME,
+                    "description": MISE_TOOLCHAIN_WORKFLOW_DESCRIPTION,
+                    "taskTypes": ["build", "lint", "test", "scan"],
+                }
+            ],
         });
 
         match obj.get_mut("formulation").and_then(Value::as_array_mut) {
@@ -310,9 +316,63 @@ fn build_formulation_bom(
                 obj.insert("formulation".to_string(), Value::Array(vec![formula]));
             }
         }
+
+        merge_dependencies(obj, merged.dependencies);
     }
 
-    Ok(base)
+    Ok(())
+}
+
+fn merge_dependencies(obj: &mut Map<String, Value>, toolchain_deps: Vec<Value>) {
+    if toolchain_deps.is_empty() {
+        return;
+    }
+
+    let Some(existing_deps) = obj.get_mut("dependencies").and_then(Value::as_array_mut) else {
+        obj.insert("dependencies".to_string(), Value::Array(toolchain_deps));
+        return;
+    };
+
+    let mut ref_to_index: HashMap<String, usize> = HashMap::with_capacity(existing_deps.len());
+    for (idx, dep) in existing_deps.iter().enumerate() {
+        if let Some(dep_ref) = dep.get("ref").and_then(Value::as_str) {
+            ref_to_index.entry(dep_ref.to_string()).or_insert(idx);
+        }
+    }
+
+    for dep in toolchain_deps {
+        let Some(dep_ref) = dep.get("ref").and_then(Value::as_str) else {
+            continue;
+        };
+
+        if let Some(&existing_idx) = ref_to_index.get(dep_ref) {
+            if let Some(new_targets) = dep.get("dependsOn").and_then(Value::as_array)
+                && !new_targets.is_empty()
+                && let Some(existing_obj) = existing_deps[existing_idx].as_object_mut()
+            {
+                let targets_arr = existing_obj
+                    .entry("dependsOn")
+                    .or_insert_with(|| Value::Array(Vec::new()));
+                if let Some(arr) = targets_arr.as_array_mut() {
+                    let mut seen: HashSet<String> = arr
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect();
+                    for target in new_targets {
+                        if let Some(target_str) = target.as_str()
+                            && seen.insert(target_str.to_string())
+                        {
+                            arr.push(Value::String(target_str.to_string()));
+                        }
+                    }
+                }
+            }
+        } else {
+            ref_to_index.insert(dep_ref.to_string(), existing_deps.len());
+            existing_deps.push(dep);
+        }
+    }
 }
 
 fn build_components_bom(project_root: &Path, merged: MergedToolchain) -> Result<Value, SbomError> {
@@ -494,14 +554,152 @@ mod tests {
             ]
         });
 
-        let merged = merge_toolchain_bom(&mise_components, &sidecar_json, true).unwrap();
+        let merged = merge_toolchain_bom(&mise_components, &sidecar_json).unwrap();
         assert_eq!(merged.components.len(), 2);
         assert!(merged.components[0].get("licenses").is_some());
         assert_eq!(merged.components[1]["name"], "chalk");
         assert_eq!(merged.dependencies.len(), 2);
+    }
 
-        let merged_no_deps = merge_toolchain_bom(&mise_components, &sidecar_json, false).unwrap();
-        assert_eq!(merged_no_deps.components.len(), 2);
-        assert!(merged_no_deps.dependencies.is_empty());
+    #[test]
+    fn apply_formulation_preserves_dep_graph_and_workflows_on_empty_and_mixed_boms() {
+        let mise_components = vec![CycloneDxComponent {
+            bom_ref: "pkg:npm/%40commitlint/cli@21.2.4".to_string(),
+            component_type: "application".to_string(),
+            name: "@commitlint/cli".to_string(),
+            version: "21.2.4".to_string(),
+            purl: "pkg:npm/%40commitlint/cli@21.2.4".to_string(),
+            hashes: Vec::new(),
+            external_references: Vec::new(),
+            properties: vec![CycloneDxProperty {
+                name: "mise:tool".to_string(),
+                value: "npm:@commitlint/cli".to_string(),
+            }],
+        }];
+        let sidecar_json = json!({
+            "components": [
+                {
+                    "bom-ref": "pkg:npm/%40commitlint/cli@21.2.4",
+                    "type": "library",
+                    "name": "@commitlint/cli",
+                    "version": "21.2.4",
+                    "purl": "pkg:npm/%40commitlint/cli@21.2.4"
+                },
+                {
+                    "bom-ref": "pkg:npm/chalk@5.3.0",
+                    "type": "library",
+                    "name": "chalk",
+                    "version": "5.3.0",
+                    "purl": "pkg:npm/chalk@5.3.0"
+                }
+            ],
+            "dependencies": [
+                {
+                    "ref": "pkg:npm/%40commitlint/cli@21.2.4",
+                    "dependsOn": ["pkg:npm/chalk@5.3.0"]
+                }
+            ]
+        });
+
+        // Empty-repo case: no shipped components, root ref has empty dependsOn.
+        let merged_empty = merge_toolchain_bom(&mise_components, &sidecar_json).unwrap();
+        let mut empty_base = json!({
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.6",
+            "metadata": { "component": { "bom-ref": "repo-root-uuid" } },
+            "components": [],
+            "dependencies": [{ "ref": "repo-root-uuid", "dependsOn": [] }]
+        });
+        apply_formulation_toolchain(&mut empty_base, merged_empty).unwrap();
+
+        assert_eq!(empty_base["$schema"], CYCLONEDX_1_7_SCHEMA);
+        assert_eq!(empty_base["specVersion"], CYCLONEDX_SPEC_VERSION);
+        assert!(empty_base["components"].as_array().unwrap().is_empty());
+        assert_eq!(empty_base["formulation"][0]["bom-ref"], MISE_TOOLCHAIN_REF);
+        assert_eq!(
+            empty_base["formulation"][0]["workflows"][0],
+            json!({
+                "bom-ref": MISE_TOOLCHAIN_WORKFLOW_REF,
+                "uid": MISE_TOOLCHAIN_REF,
+                "name": MISE_TOOLCHAIN_WORKFLOW_NAME,
+                "description": MISE_TOOLCHAIN_WORKFLOW_DESCRIPTION,
+                "taskTypes": ["build", "lint", "test", "scan"],
+            })
+        );
+        let empty_deps = empty_base["dependencies"].as_array().unwrap();
+        assert_eq!(empty_deps.len(), 3);
+        assert_eq!(
+            empty_deps[0],
+            json!({ "ref": "repo-root-uuid", "dependsOn": [] })
+        );
+        assert_eq!(
+            empty_deps[1],
+            json!({
+                "ref": MISE_TOOLCHAIN_REF,
+                "dependsOn": ["pkg:npm/%40commitlint/cli@21.2.4"]
+            })
+        );
+        assert_eq!(
+            empty_deps[2],
+            json!({
+                "ref": "pkg:npm/%40commitlint/cli@21.2.4",
+                "dependsOn": ["pkg:npm/chalk@5.3.0"]
+            })
+        );
+
+        // Mixed-repo case: shipped dependencies exist and one package overlaps without duplicating `ref`.
+        let merged_mixed = merge_toolchain_bom(&mise_components, &sidecar_json).unwrap();
+        let mut mixed_base = json!({
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.6",
+            "metadata": { "component": { "bom-ref": "app-root-uuid" } },
+            "components": [
+                { "bom-ref": "pkg:cargo/clap@4.5.0", "type": "library", "name": "clap" }
+            ],
+            "dependencies": [
+                { "ref": "app-root-uuid", "dependsOn": ["pkg:cargo/clap@4.5.0"] },
+                { "ref": "pkg:npm/%40commitlint/cli@21.2.4", "dependsOn": ["pkg:npm/ansi-styles@4.3.0"] }
+            ]
+        });
+        apply_formulation_toolchain(&mut mixed_base, merged_mixed).unwrap();
+
+        let mixed_deps = mixed_base["dependencies"].as_array().unwrap();
+        assert_eq!(mixed_deps.len(), 3);
+        assert_eq!(
+            mixed_deps[0],
+            json!({ "ref": "app-root-uuid", "dependsOn": ["pkg:cargo/clap@4.5.0"] })
+        );
+        assert_eq!(
+            mixed_deps[1],
+            json!({
+                "ref": "pkg:npm/%40commitlint/cli@21.2.4",
+                "dependsOn": ["pkg:npm/ansi-styles@4.3.0", "pkg:npm/chalk@5.3.0"]
+            })
+        );
+        assert_eq!(
+            mixed_deps[2],
+            json!({
+                "ref": MISE_TOOLCHAIN_REF,
+                "dependsOn": ["pkg:npm/%40commitlint/cli@21.2.4"]
+            })
+        );
+    }
+
+    #[test]
+    fn apply_formulation_skips_formula_and_deps_when_toolchain_is_empty() {
+        let merged = merge_toolchain_bom(&[], &json!({})).unwrap();
+        let mut base = json!({
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.6",
+            "components": [],
+            "dependencies": [{ "ref": "repo-root-uuid", "dependsOn": [] }]
+        });
+        apply_formulation_toolchain(&mut base, merged).unwrap();
+
+        assert!(base.get("formulation").is_none());
+        assert_eq!(
+            base["dependencies"],
+            json!([{ "ref": "repo-root-uuid", "dependsOn": [] }])
+        );
     }
 }
