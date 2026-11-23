@@ -1,9 +1,8 @@
-name: "mise"
+name: mise
 repository: github.com/WJ44/trivy-plugin-mise
 maintainer: WJ44
-version: "0.1.0" # x-release-please-version
-summary:
-  Trivy plugin for mise CycloneDX SBOM generation and vulnerability scanning
+version: 0.1.1
+summary: Trivy plugin for mise CycloneDX SBOM generation and vulnerability scanning
 usage: mise [command]
 output: false
 description: |-
@@ -14,25 +13,30 @@ platforms:
   - selector:
       os: linux
       arch: amd64
-    uri: https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-v0.1.0-linux-x64.tar.gz # x-release-please-version
+    uri: >-
+      https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-v0.1.0-linux-x64.tar.gz
     bin: ./trivy-plugin-mise
   - selector:
       os: linux
       arch: arm64
-    uri: https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-v0.1.0-linux-arm64.tar.gz # x-release-please-version
+    uri: >-
+      https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-v0.1.0-linux-arm64.tar.gz
     bin: ./trivy-plugin-mise
   - selector:
       os: darwin
       arch: amd64
-    uri: https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-v0.1.0-macos-x64.tar.gz # x-release-please-version
+    uri: >-
+      https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-v0.1.0-macos-x64.tar.gz
     bin: ./trivy-plugin-mise
   - selector:
       os: darwin
       arch: arm64
-    uri: https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-v0.1.0-macos-arm64.tar.gz # x-release-please-version
+    uri: >-
+      https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-v0.1.0-macos-arm64.tar.gz
     bin: ./trivy-plugin-mise
   - selector:
       os: windows
       arch: amd64
-    uri: https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-v0.1.0-windows-x64.zip # x-release-please-version
+    uri: >-
+      https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-v0.1.0-windows-x64.zip
     bin: ./trivy-plugin-mise.exe
