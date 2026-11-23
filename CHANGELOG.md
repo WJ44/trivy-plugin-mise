@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0](https://github.com/WJ44/trivy-plugin-mise/compare/v1.1.0...v1.2.0) (2026-11-23)
+
+
+### Features
+
+* **cli:** align default command, flags, ignorefile, and streams with trivy ([#29](https://github.com/WJ44/trivy-plugin-mise/issues/29)) ([#34](https://github.com/WJ44/trivy-plugin-mise/issues/34)) ([9682111](https://github.com/WJ44/trivy-plugin-mise/commit/9682111bb257abaa2f00dc744aef98ba5f48f55f))
+* **plugin:** enforce trivy-plugin-index manifest rules and docs ([#37](https://github.com/WJ44/trivy-plugin-mise/issues/37)) ([ece75f0](https://github.com/WJ44/trivy-plugin-mise/commit/ece75f0b4525c9e6044105df14e1530e576cce4b)), closes [#30](https://github.com/WJ44/trivy-plugin-mise/issues/30)
+
 ## [1.1.0](https://github.com/WJ44/trivy-plugin-mise/compare/v1.0.0...v1.1.0) (2026-11-23)
 
 

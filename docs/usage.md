@@ -38,7 +38,7 @@ trivy plugin search mise
 
 # Install the latest indexed version (or pin a specific release tag)
 trivy plugin install mise
-trivy plugin install mise@v1.1.0 # x-release-please-version
+trivy plugin install mise@v1.2.0 # x-release-please-version
 
 # Or install directly from the GitHub repository URL (works even before index refresh)
 trivy plugin install github.com/WJ44/trivy-plugin-mise
@@ -138,7 +138,7 @@ Pin `trivy` and `trivy-plugin-mise` in your repository's `mise.toml` using the
 ```toml
 [tools]
 trivy = "0.76.2"
-"github:WJ44/trivy-plugin-mise" = "1.1.0" # x-release-please-version
+"github:WJ44/trivy-plugin-mise" = "1.2.0" # x-release-please-version
 ```
 
 Install the tools (and optionally run `mise lock` to lock platform URLs and
@@ -454,7 +454,7 @@ Add `sbom` and `scan` tasks to your repository's `mise.toml`:
 ```toml
 [tools]
 trivy = "0.76.2"
-"github:WJ44/trivy-plugin-mise" = "1.1.0" # x-release-please-version
+"github:WJ44/trivy-plugin-mise" = "1.2.0" # x-release-please-version
 
 [tasks.sbom]
 description = "Generate CycloneDX SBOM (sbom.cdx.json)"
