@@ -10,15 +10,27 @@ use crate::sbom::SbomMode;
     name = "trivy-plugin-mise",
     version,
     about = "Bridge mise with Trivy for CycloneDX SBOM generation and vulnerability scanning",
-    propagate_version = true
+    propagate_version = true,
+    args_conflicts_with_subcommands = true
 )]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
+
+    #[command(flatten)]
+    pub scan: ScanArgs,
+}
+
+impl Cli {
+    /// Returns the resolved command, defaulting to `Commands::Scan` when no explicit subcommand was provided.
+    #[must_use]
+    pub fn into_command(self) -> Commands {
+        self.command.unwrap_or(Commands::Scan(self.scan))
+    }
 }
 
 /// Supported CLI subcommands.
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, PartialEq, Eq)]
 pub enum Commands {
     /// Generate a CycloneDX SBOM including mise-managed tools and dependencies.
     Sbom {
@@ -37,6 +49,9 @@ pub enum Commands {
         /// Target repository path.
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// Additional arguments forwarded directly to underlying `trivy fs` invocations (after `--`).
+        #[arg(last = true, value_name = "TRIVY_ARGS")]
+        trivy_args: Vec<String>,
     },
     /// Scan the repository and mise-managed tool dependencies for vulnerabilities and licenses.
     Scan(ScanArgs),
@@ -44,7 +59,7 @@ pub enum Commands {
     Version,
 }
 
-/// Arguments for the `scan` subcommand.
+/// Arguments for the `scan` subcommand (also flattened onto the top-level CLI as the default command).
 #[derive(Debug, Clone, Args, PartialEq, Eq)]
 pub struct ScanArgs {
     /// Target directory to scan.
@@ -52,16 +67,28 @@ pub struct ScanArgs {
     pub target: PathBuf,
 
     /// Path to Trivy configuration file (defaults to `<target>/trivy.yaml` if present).
-    #[arg(long, value_name = "PATH")]
+    #[arg(short = 'c', long, value_name = "PATH")]
     pub config: Option<PathBuf>,
 
-    /// Path to Trivy ignore file (defaults to `<target>/.trivyignore.yaml` if present).
+    /// Path to Trivy ignore file (defaults to `<target>/.trivyignore.yaml` or `<target>/.trivyignore` if present).
     #[arg(long, value_name = "PATH")]
     pub ignorefile: Option<PathBuf>,
 
     /// Comma-separated list of severities to include (e.g. `HIGH,CRITICAL`).
-    #[arg(long, value_name = "SEVERITY")]
+    #[arg(short = 's', long, value_name = "SEVERITY")]
     pub severity: Option<String>,
+
+    /// Suppress progress headers and pass `--quiet` to underlying Trivy invocations.
+    #[arg(short = 'q', long)]
+    pub quiet: bool,
+
+    /// Ignore unfixed vulnerabilities (forwarded to Trivy).
+    #[arg(long)]
+    pub ignore_unfixed: bool,
+
+    /// Comma-separated list of scanners for the repository scan tier.
+    #[arg(long, default_value = "vuln,license", value_name = "SCANNERS")]
+    pub scanners: String,
 
     /// Exit code to return when unaccepted findings are detected.
     #[arg(long, default_value_t = 1, value_name = "CODE")]
@@ -78,6 +105,29 @@ pub struct ScanArgs {
     /// Scan only `.mise/locks/` sidecar lockfiles (plus `--include-gobinary` if requested) and skip the repository root scan.
     #[arg(long, conflicts_with = "repo_only")]
     pub toolchain_only: bool,
+
+    /// Additional arguments forwarded directly to underlying `trivy` invocations (after `--`).
+    #[arg(last = true, value_name = "TRIVY_ARGS")]
+    pub trivy_args: Vec<String>,
+}
+
+impl Default for ScanArgs {
+    fn default() -> Self {
+        Self {
+            target: PathBuf::from("."),
+            config: None,
+            ignorefile: None,
+            severity: None,
+            quiet: false,
+            ignore_unfixed: false,
+            scanners: "vuln,license".to_string(),
+            exit_code: 1,
+            include_gobinary: false,
+            repo_only: false,
+            toolchain_only: false,
+            trivy_args: Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -93,14 +143,15 @@ mod tests {
     #[test]
     fn parse_subcommands() {
         assert!(matches!(
-            Cli::try_parse_from(["trivy-plugin-mise", "sbom"]).map(|c| c.command),
+            Cli::try_parse_from(["trivy-plugin-mise", "sbom"]).map(Cli::into_command),
             Ok(Commands::Sbom {
                 mode: SbomMode::Formulation,
                 output: None,
                 platform: None,
                 no_verify_digests: false,
+                ref trivy_args,
                 ..
-            })
+            }) if trivy_args.is_empty()
         ));
         assert!(matches!(
             Cli::try_parse_from([
@@ -110,23 +161,72 @@ mod tests {
                 "components",
                 "--output",
                 "sbom-tools.cdx.json",
-                "."
+                ".",
+                "--",
+                "--skip-dirs",
+                "vendor"
             ])
-            .map(|c| c.command),
+            .map(Cli::into_command),
             Ok(Commands::Sbom {
                 mode: SbomMode::Components,
                 output: Some(_),
+                ref trivy_args,
                 ..
-            })
+            }) if trivy_args == &vec!["--skip-dirs".to_string(), "vendor".to_string()]
         ));
         assert!(matches!(
-            Cli::try_parse_from(["trivy-plugin-mise", "scan"]).map(|c| c.command),
+            Cli::try_parse_from(["trivy-plugin-mise", "scan"]).map(Cli::into_command),
             Ok(Commands::Scan(_))
         ));
         assert!(matches!(
-            Cli::try_parse_from(["trivy-plugin-mise", "version"]).map(|c| c.command),
+            Cli::try_parse_from(["trivy-plugin-mise", "version"]).map(Cli::into_command),
             Ok(Commands::Version)
         ));
+    }
+
+    #[test]
+    fn parse_default_scan_without_subcommand() {
+        let default_cli =
+            Cli::try_parse_from(["trivy-plugin-mise"]).expect("bare invocation should parse");
+        assert!(default_cli.command.is_none());
+        assert_eq!(
+            default_cli.into_command(),
+            Commands::Scan(ScanArgs::default())
+        );
+
+        let top_level_scan = Cli::try_parse_from([
+            "trivy-plugin-mise",
+            "/tmp/project",
+            "-c",
+            "custom-trivy.yaml",
+            "-s",
+            "HIGH,CRITICAL",
+            "-q",
+            "--ignore-unfixed",
+            "--scanners",
+            "vuln",
+            "--",
+            "--skip-db-update",
+            "--offline-scan",
+        ])
+        .expect("top-level scan args should parse");
+        assert!(top_level_scan.command.is_none());
+
+        match top_level_scan.into_command() {
+            Commands::Scan(args) => {
+                assert_eq!(args.target, PathBuf::from("/tmp/project"));
+                assert_eq!(args.config, Some(PathBuf::from("custom-trivy.yaml")));
+                assert_eq!(args.severity.as_deref(), Some("HIGH,CRITICAL"));
+                assert!(args.quiet);
+                assert!(args.ignore_unfixed);
+                assert_eq!(args.scanners, "vuln");
+                assert_eq!(
+                    args.trivy_args,
+                    vec!["--skip-db-update".to_string(), "--offline-scan".to_string()]
+                );
+            }
+            other => panic!("expected default Scan command, got {other:?}"),
+        }
     }
 
     #[test]
@@ -141,22 +241,36 @@ mod tests {
             "custom-ignore.yaml",
             "--severity",
             "HIGH,CRITICAL",
+            "--quiet",
+            "--ignore-unfixed",
+            "--scanners",
+            "vuln",
             "--exit-code",
             "2",
             "--include-gobinary",
+            "--",
+            "--skip-files",
+            "foo.lock",
         ])
         .expect("scan flags should parse");
 
-        match cli.command {
+        match cli.into_command() {
             Commands::Scan(args) => {
                 assert_eq!(args.target, PathBuf::from("/tmp/project"));
                 assert_eq!(args.config, Some(PathBuf::from("custom-trivy.yaml")));
                 assert_eq!(args.ignorefile, Some(PathBuf::from("custom-ignore.yaml")));
                 assert_eq!(args.severity.as_deref(), Some("HIGH,CRITICAL"));
+                assert!(args.quiet);
+                assert!(args.ignore_unfixed);
+                assert_eq!(args.scanners, "vuln");
                 assert_eq!(args.exit_code, 2);
                 assert!(args.include_gobinary);
                 assert!(!args.repo_only);
                 assert!(!args.toolchain_only);
+                assert_eq!(
+                    args.trivy_args,
+                    vec!["--skip-files".to_string(), "foo.lock".to_string()]
+                );
             }
             other => panic!("expected Scan command, got {other:?}"),
         }
@@ -166,7 +280,7 @@ mod tests {
     fn parse_scan_tier_flags() {
         let repo_only = Cli::try_parse_from(["trivy-plugin-mise", "scan", "--repo-only"])
             .expect("--repo-only should parse");
-        match repo_only.command {
+        match repo_only.into_command() {
             Commands::Scan(args) => {
                 assert!(args.repo_only);
                 assert!(!args.toolchain_only);
@@ -181,7 +295,7 @@ mod tests {
             "--include-gobinary",
         ])
         .expect("--toolchain-only --include-gobinary should parse");
-        match toolchain_only.command {
+        match toolchain_only.into_command() {
             Commands::Scan(args) => {
                 assert!(!args.repo_only);
                 assert!(args.toolchain_only);
@@ -197,7 +311,7 @@ mod tests {
             "--include-gobinary",
         ])
         .expect("--repo-only --include-gobinary should parse");
-        match repo_with_gobinary.command {
+        match repo_with_gobinary.into_command() {
             Commands::Scan(args) => {
                 assert!(args.repo_only);
                 assert!(args.include_gobinary);

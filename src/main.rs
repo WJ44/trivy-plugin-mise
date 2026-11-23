@@ -8,7 +8,7 @@ use trivy_plugin_mise::scan::{ScanOptions, run_scan};
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    match cli.command {
+    match cli.into_command() {
         Commands::Version => {
             println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -19,11 +19,13 @@ fn main() -> ExitCode {
             platform,
             no_verify_digests,
             path,
+            trivy_args,
         } => {
             let options = SbomOptions {
                 mode,
                 target_platform: platform,
                 verify_digests: !no_verify_digests,
+                trivy_args,
             };
             match generate_sbom(&path, &options).and_then(|bom| write_sbom(&bom, output.as_deref()))
             {

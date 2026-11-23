@@ -383,11 +383,21 @@ pub fn run_trivy_fs_cyclonedx(
     path: &Path,
     skip_dirs: &[&str],
 ) -> Result<serde_json::Value, SidecarError> {
+    run_trivy_fs_cyclonedx_with_args(path, skip_dirs, &[])
+}
+
+/// Runs `trivy fs --format cyclonedx --quiet` on `path` with additional raw Trivy arguments and returns raw JSON.
+pub fn run_trivy_fs_cyclonedx_with_args(
+    path: &Path,
+    skip_dirs: &[&str],
+    trivy_args: &[String],
+) -> Result<serde_json::Value, SidecarError> {
     let mut cmd = Command::new("trivy");
     cmd.args(["fs", "--format", "cyclonedx", "--quiet"]);
     for dir in skip_dirs {
         cmd.args(["--skip-dirs", dir]);
     }
+    cmd.args(trivy_args);
     cmd.arg(path);
 
     let output = cmd.output().map_err(SidecarError::TrivyInvocation)?;
@@ -407,6 +417,14 @@ pub fn run_trivy_fs_cyclonedx(
 pub fn extract_cyclonedx_json_from_workspace(
     workspace: &MaterializedWorkspace,
 ) -> Result<serde_json::Value, SidecarError> {
+    extract_cyclonedx_json_from_workspace_with_args(workspace, &[])
+}
+
+/// Runs `trivy fs --format cyclonedx --quiet` on a materialized workspace with extra Trivy arguments and returns raw JSON.
+pub fn extract_cyclonedx_json_from_workspace_with_args(
+    workspace: &MaterializedWorkspace,
+    trivy_args: &[String],
+) -> Result<serde_json::Value, SidecarError> {
     let has_files = workspace
         .entries()
         .iter()
@@ -420,7 +438,7 @@ pub fn extract_cyclonedx_json_from_workspace(
         }));
     }
 
-    run_trivy_fs_cyclonedx(workspace.path(), &[])
+    run_trivy_fs_cyclonedx_with_args(workspace.path(), &[], trivy_args)
 }
 
 /// Runs `trivy fs --format cyclonedx --quiet` on a materialized workspace and parses the resulting BOM.
@@ -439,8 +457,18 @@ pub fn extract_sidecar_json(
     lock: Option<&MiseLock>,
     options: &SidecarOptions,
 ) -> Result<serde_json::Value, SidecarError> {
+    extract_sidecar_json_with_args(project_root, lock, options, &[])
+}
+
+/// End-to-end helper with additional raw Trivy arguments forwarded to `trivy fs --format cyclonedx`.
+pub fn extract_sidecar_json_with_args(
+    project_root: &Path,
+    lock: Option<&MiseLock>,
+    options: &SidecarOptions,
+    trivy_args: &[String],
+) -> Result<serde_json::Value, SidecarError> {
     let workspace = materialize_sidecars(project_root, lock, options)?;
-    let bom = extract_cyclonedx_json_from_workspace(&workspace)?;
+    let bom = extract_cyclonedx_json_from_workspace_with_args(&workspace, trivy_args)?;
     workspace.close().map_err(|source| SidecarError::Io {
         path: std::env::temp_dir().display().to_string(),
         source,

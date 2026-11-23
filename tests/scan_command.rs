@@ -89,15 +89,20 @@ fn scan_clean_repository_exits_zero() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let repo_idx = stdout
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stdout.contains("==>"),
+        "expected tier headers on stderr, not stdout:\n{stdout}"
+    );
+    let repo_idx = stderr
         .find("==> Repository scan (trivy fs --scanners vuln,license):")
-        .expect("expected repository tier header in stdout");
-    let toolchain_idx = stdout
+        .expect("expected repository tier header in stderr");
+    let toolchain_idx = stderr
         .find("==> Toolchain sidecar scan (.mise/locks/, trivy fs --scanners vuln)")
-        .expect("expected toolchain sidecar tier header in stdout");
-    let summary_idx = stdout
+        .expect("expected toolchain sidecar tier header in stderr");
+    let summary_idx = stderr
         .find("==> Scan summary: repo=clean, toolchain=clean, gobinary=skipped -> clean (exit code 0)")
-        .expect("expected scan summary line in stdout");
+        .expect("expected scan summary line in stderr");
     assert!(repo_idx < toolchain_idx && toolchain_idx < summary_idx);
 }
 
@@ -307,15 +312,15 @@ fn scan_include_gobinary_scans_active_mise_install_paths() {
         Some(1),
         "expected --include-gobinary to scan active mise install directory and detect findings"
     );
-    let gobinary_stdout = String::from_utf8_lossy(&gobinary_output.stdout);
+    let gobinary_stderr = String::from_utf8_lossy(&gobinary_output.stderr);
     assert!(
-        gobinary_stdout.contains(
+        gobinary_stderr.contains(
             "==> Binary toolchain scan (--include-gobinary, trivy rootfs --scanners vuln):"
         ),
-        "expected binary toolchain header in stdout:\n{gobinary_stdout}"
+        "expected binary toolchain header in stderr:\n{gobinary_stderr}"
     );
     assert!(
-        !String::from_utf8_lossy(&default_output.stdout).contains("==> Binary toolchain scan"),
+        !String::from_utf8_lossy(&default_output.stderr).contains("==> Binary toolchain scan"),
         "default scan should not print binary toolchain header"
     );
 }
@@ -388,11 +393,11 @@ fn scan_repo_only_skips_toolchain_and_gobinary() {
         String::from_utf8_lossy(&repo_only_output.stderr)
     );
 
-    let stdout = String::from_utf8_lossy(&repo_only_output.stdout);
-    assert!(stdout.contains("==> Repository scan (trivy fs --scanners vuln,license):"));
-    assert!(!stdout.contains("==> Toolchain sidecar scan"));
-    assert!(!stdout.contains("==> Binary toolchain scan"));
-    assert!(stdout.contains(
+    let stderr = String::from_utf8_lossy(&repo_only_output.stderr);
+    assert!(stderr.contains("==> Repository scan (trivy fs --scanners vuln,license):"));
+    assert!(!stderr.contains("==> Toolchain sidecar scan"));
+    assert!(!stderr.contains("==> Binary toolchain scan"));
+    assert!(stderr.contains(
         "==> Scan summary: repo=clean, toolchain=skipped, gobinary=skipped -> clean (exit code 0)"
     ));
 
@@ -405,8 +410,8 @@ fn scan_repo_only_skips_toolchain_and_gobinary() {
         .output()
         .expect("failed to run --repo-only scan on vulnerable repo");
     assert_eq!(repo_vuln_output.status.code(), Some(1));
-    let vuln_stdout = String::from_utf8_lossy(&repo_vuln_output.stdout);
-    assert!(vuln_stdout.contains(
+    let vuln_stderr = String::from_utf8_lossy(&repo_vuln_output.stderr);
+    assert!(vuln_stderr.contains(
         "==> Scan summary: repo=findings, toolchain=skipped, gobinary=skipped -> findings detected (exit code 1)"
     ));
 }
@@ -470,14 +475,14 @@ fn scan_toolchain_only_skips_repo_and_runs_sidecar_and_gobinary() {
         String::from_utf8_lossy(&clean_toolchain_output.stdout),
         String::from_utf8_lossy(&clean_toolchain_output.stderr)
     );
-    let clean_stdout = String::from_utf8_lossy(&clean_toolchain_output.stdout);
-    assert!(!clean_stdout.contains("==> Repository scan"));
+    let clean_stderr = String::from_utf8_lossy(&clean_toolchain_output.stderr);
+    assert!(!clean_stderr.contains("==> Repository scan"));
     assert!(
-        clean_stdout
+        clean_stderr
             .contains("==> Toolchain sidecar scan (.mise/locks/, trivy fs --scanners vuln)")
     );
-    assert!(!clean_stdout.contains("==> Binary toolchain scan"));
-    assert!(clean_stdout.contains(
+    assert!(!clean_stderr.contains("==> Binary toolchain scan"));
+    assert!(clean_stderr.contains(
         "==> Scan summary: repo=skipped, toolchain=clean, gobinary=skipped -> clean (exit code 0)"
     ));
 
@@ -490,18 +495,18 @@ fn scan_toolchain_only_skips_repo_and_runs_sidecar_and_gobinary() {
         .output()
         .expect("failed to run --toolchain-only --include-gobinary scan");
     assert_eq!(gobinary_output.status.code(), Some(1));
-    let gobinary_stdout = String::from_utf8_lossy(&gobinary_output.stdout);
-    assert!(!gobinary_stdout.contains("==> Repository scan"));
+    let gobinary_stderr = String::from_utf8_lossy(&gobinary_output.stderr);
+    assert!(!gobinary_stderr.contains("==> Repository scan"));
     assert!(
-        gobinary_stdout
+        gobinary_stderr
             .contains("==> Toolchain sidecar scan (.mise/locks/, trivy fs --scanners vuln)")
     );
     assert!(
-        gobinary_stdout.contains(
+        gobinary_stderr.contains(
             "==> Binary toolchain scan (--include-gobinary, trivy rootfs --scanners vuln):"
         )
     );
-    assert!(gobinary_stdout.contains(
+    assert!(gobinary_stderr.contains(
         "==> Scan summary: repo=skipped, toolchain=clean, gobinary=findings (1 path) -> findings detected (exit code 1)"
     ));
 
@@ -515,9 +520,9 @@ fn scan_toolchain_only_skips_repo_and_runs_sidecar_and_gobinary() {
         .output()
         .expect("failed to run --toolchain-only on vulnerable sidecar");
     assert_eq!(vuln_sidecar_output.status.code(), Some(1));
-    let vuln_stdout = String::from_utf8_lossy(&vuln_sidecar_output.stdout);
-    assert!(!vuln_stdout.contains("==> Repository scan"));
-    assert!(vuln_stdout.contains(
+    let vuln_stderr = String::from_utf8_lossy(&vuln_sidecar_output.stderr);
+    assert!(!vuln_stderr.contains("==> Repository scan"));
+    assert!(vuln_stderr.contains(
         "==> Scan summary: repo=skipped, toolchain=findings, gobinary=skipped -> findings detected (exit code 1)"
     ));
 }

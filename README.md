@@ -43,6 +43,31 @@ trivy-plugin-mise --help
 
 ## CLI Usage
 
+Running `trivy mise` (or `trivy-plugin-mise`) with no subcommand executes `scan`
+by default, matching standard Trivy plugin ergonomics:
+
+```bash
+# Default scan (equivalent to `trivy mise scan .`)
+trivy mise
+trivy mise /path/to/repo -c trivy.yaml -s HIGH,CRITICAL -q --ignore-unfixed
+trivy mise --scanners vuln -- --skip-db-update --offline-scan
+
+# Explicit subcommands
+trivy mise scan --help
+trivy mise sbom --output sbom.cdx.json -- --skip-dirs vendor
+trivy mise version
+```
+
+- **Ignore file auto-discovery:** When `--ignorefile` is omitted, `scan` checks
+  `<target>/.trivyignore.yaml` first and falls back to `<target>/.trivyignore`
+  if present.
+- **Clean output streams:** Tier progress headers (`==> ...`) and
+  `==> Scan summary: ...` are written to `stderr` so `stdout` stays clean for
+  piped or machine-readable Trivy output, and are suppressed when `-q`/`--quiet`
+  is set.
+
+### Development
+
 ```bash
 cargo run -- --help
 cargo run -- --version

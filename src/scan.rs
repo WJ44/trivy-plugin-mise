@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -55,10 +56,20 @@ pub struct ScanOptions {
     pub config: Option<PathBuf>,
     pub ignorefile: Option<PathBuf>,
     pub severity: Option<String>,
+    pub quiet: bool,
+    pub ignore_unfixed: bool,
+    pub scanners: String,
     pub exit_code: i32,
     pub include_gobinary: bool,
     pub repo_only: bool,
     pub toolchain_only: bool,
+    pub trivy_args: Vec<String>,
+}
+
+impl Default for ScanOptions {
+    fn default() -> Self {
+        Self::from(ScanArgs::default())
+    }
 }
 
 impl From<ScanArgs> for ScanOptions {
@@ -68,10 +79,14 @@ impl From<ScanArgs> for ScanOptions {
             config: args.config,
             ignorefile: args.ignorefile,
             severity: args.severity,
+            quiet: args.quiet,
+            ignore_unfixed: args.ignore_unfixed,
+            scanners: args.scanners,
             exit_code: args.exit_code,
             include_gobinary: args.include_gobinary,
             repo_only: args.repo_only,
             toolchain_only: args.toolchain_only,
+            trivy_args: args.trivy_args,
         }
     }
 }
@@ -83,10 +98,14 @@ impl From<&ScanArgs> for ScanOptions {
             config: args.config.clone(),
             ignorefile: args.ignorefile.clone(),
             severity: args.severity.clone(),
+            quiet: args.quiet,
+            ignore_unfixed: args.ignore_unfixed,
+            scanners: args.scanners.clone(),
             exit_code: args.exit_code,
             include_gobinary: args.include_gobinary,
             repo_only: args.repo_only,
             toolchain_only: args.toolchain_only,
+            trivy_args: args.trivy_args.clone(),
         }
     }
 }
@@ -106,7 +125,10 @@ struct TrivyRunContext {
     config: Option<PathBuf>,
     ignorefile: Option<PathBuf>,
     severity: Option<String>,
+    quiet: bool,
+    ignore_unfixed: bool,
     exit_code: i32,
+    trivy_args: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,30 +158,32 @@ pub fn run_scan(options: &ScanOptions) -> Result<ScanOutcome, ScanError> {
             .config
             .clone()
             .or_else(|| existing_file(options.target.join("trivy.yaml"))),
-        ignorefile: options
-            .ignorefile
-            .clone()
-            .or_else(|| existing_file(options.target.join(".trivyignore.yaml"))),
+        ignorefile: resolve_ignorefile(&options.target, options.ignorefile.clone()),
         severity: options.severity.clone(),
+        quiet: options.quiet,
+        ignore_unfixed: options.ignore_unfixed,
         exit_code: options.exit_code,
+        trivy_args: options.trivy_args.clone(),
     };
 
     let run_repo = !options.toolchain_only;
     let run_toolchain = !options.repo_only;
     let run_gobinary = !options.repo_only && options.include_gobinary;
+    let repo_scanners = if options.scanners.trim().is_empty() {
+        "vuln,license"
+    } else {
+        options.scanners.trim()
+    };
 
     let repo_findings = if run_repo {
-        print_tier_line(&format!(
-            "Repository scan (trivy fs --scanners vuln,license): {}",
-            options.target.display()
-        ))?;
-        run_trivy_scan(
-            "fs",
-            "vuln,license",
-            &options.target,
-            &[".mise/locks"],
-            &ctx,
-        )?
+        print_tier_line(
+            options.quiet,
+            &format!(
+                "Repository scan (trivy fs --scanners {repo_scanners}): {}",
+                options.target.display()
+            ),
+        )?;
+        run_trivy_scan("fs", repo_scanners, &options.target, &[".mise/locks"], &ctx)?
     } else {
         false
     };
@@ -180,7 +204,10 @@ pub fn run_scan(options: &ScanOptions) -> Result<ScanOutcome, ScanError> {
             .any(|entry| !entry.materialized_files.is_empty());
 
         let findings = if has_files {
-            print_tier_line("Toolchain sidecar scan (.mise/locks/, trivy fs --scanners vuln)")?;
+            print_tier_line(
+                options.quiet,
+                "Toolchain sidecar scan (.mise/locks/, trivy fs --scanners vuln)",
+            )?;
             run_trivy_scan("fs", "vuln", workspace.path(), &[], &ctx)?
         } else {
             false
@@ -203,10 +230,13 @@ pub fn run_scan(options: &ScanOptions) -> Result<ScanOutcome, ScanError> {
         let install_paths = discover_active_mise_install_paths(&options.target)?;
         scanned_gobinary_paths = install_paths.len();
         for install_path in install_paths {
-            print_tier_line(&format!(
-                "Binary toolchain scan (--include-gobinary, trivy rootfs --scanners vuln): {}",
-                install_path.display()
-            ))?;
+            print_tier_line(
+                options.quiet,
+                &format!(
+                    "Binary toolchain scan (--include-gobinary, trivy rootfs --scanners vuln): {}",
+                    install_path.display()
+                ),
+            )?;
             if run_trivy_scan("rootfs", "vuln", &install_path, &[], &ctx)? {
                 gobinary_findings = true;
             }
@@ -230,9 +260,12 @@ pub fn run_scan(options: &ScanOptions) -> Result<ScanOutcome, ScanError> {
         "clean (exit code 0)".to_string()
     };
 
-    print_tier_line(&format!(
-        "Scan summary: repo={repo_status}, toolchain={toolchain_status}, gobinary={gobinary_status} -> {overall_status}"
-    ))?;
+    print_tier_line(
+        options.quiet,
+        &format!(
+            "Scan summary: repo={repo_status}, toolchain={toolchain_status}, gobinary={gobinary_status} -> {overall_status}"
+        ),
+    )?;
 
     Ok(ScanOutcome {
         findings_detected,
@@ -281,6 +314,53 @@ fn discover_active_mise_install_paths(target: &Path) -> Result<Vec<PathBuf>, Sca
     parse_active_mise_install_paths(&output.stdout)
 }
 
+fn build_trivy_scan_args(
+    subcommand: &str,
+    scanners: &str,
+    target: &Path,
+    skip_dirs: &[&str],
+    ctx: &TrivyRunContext,
+) -> Vec<OsString> {
+    let exit_code_str = ctx.exit_code.to_string();
+    let mut args = vec![
+        OsString::from(subcommand),
+        OsString::from("--scanners"),
+        OsString::from(scanners),
+        OsString::from("--exit-code"),
+        OsString::from(exit_code_str),
+    ];
+
+    for dir in skip_dirs {
+        args.push(OsString::from("--skip-dirs"));
+        args.push(OsString::from(dir));
+    }
+
+    if let Some(config) = &ctx.config {
+        args.push(OsString::from("--config"));
+        args.push(config.as_os_str().to_owned());
+    }
+    if let Some(ignorefile) = &ctx.ignorefile {
+        args.push(OsString::from("--ignorefile"));
+        args.push(ignorefile.as_os_str().to_owned());
+    }
+    if let Some(severity) = &ctx.severity {
+        args.push(OsString::from("--severity"));
+        args.push(OsString::from(severity));
+    }
+    if ctx.quiet {
+        args.push(OsString::from("--quiet"));
+    }
+    if ctx.ignore_unfixed {
+        args.push(OsString::from("--ignore-unfixed"));
+    }
+    for extra in &ctx.trivy_args {
+        args.push(OsString::from(extra));
+    }
+
+    args.push(target.as_os_str().to_owned());
+    args
+}
+
 fn run_trivy_scan(
     subcommand: &str,
     scanners: &str,
@@ -288,31 +368,10 @@ fn run_trivy_scan(
     skip_dirs: &[&str],
     ctx: &TrivyRunContext,
 ) -> Result<bool, ScanError> {
-    let exit_code_str = ctx.exit_code.to_string();
     let mut cmd = Command::new("trivy");
-    cmd.args([
-        subcommand,
-        "--scanners",
-        scanners,
-        "--exit-code",
-        &exit_code_str,
-    ]);
-
-    for dir in skip_dirs {
-        cmd.args(["--skip-dirs", dir]);
-    }
-
-    if let Some(config) = &ctx.config {
-        cmd.arg("--config").arg(config);
-    }
-    if let Some(ignorefile) = &ctx.ignorefile {
-        cmd.arg("--ignorefile").arg(ignorefile);
-    }
-    if let Some(severity) = &ctx.severity {
-        cmd.arg("--severity").arg(severity);
-    }
-
-    cmd.arg(target);
+    cmd.args(build_trivy_scan_args(
+        subcommand, scanners, target, skip_dirs, ctx,
+    ));
 
     let status = cmd.status().map_err(ScanError::TrivyInvocation)?;
     if status.success() {
@@ -329,20 +388,36 @@ fn run_trivy_scan(
     })
 }
 
+fn resolve_ignorefile(target: &Path, explicit: Option<PathBuf>) -> Option<PathBuf> {
+    explicit
+        .or_else(|| existing_file(target.join(".trivyignore.yaml")))
+        .or_else(|| existing_file(target.join(".trivyignore")))
+}
+
 fn existing_file(path: PathBuf) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-fn print_tier_line(message: &str) -> Result<(), ScanError> {
-    let mut stdout = std::io::stdout().lock();
-    writeln!(stdout, "==> {message}").map_err(|source| ScanError::Io {
-        path: "<stdout>".to_string(),
+fn write_tier_line<W: Write>(writer: &mut W, quiet: bool, message: &str) -> Result<(), ScanError> {
+    if quiet {
+        return Ok(());
+    }
+    writeln!(writer, "==> {message}").map_err(|source| ScanError::Io {
+        path: "<stderr>".to_string(),
         source,
     })?;
-    stdout.flush().map_err(|source| ScanError::Io {
-        path: "<stdout>".to_string(),
+    writer.flush().map_err(|source| ScanError::Io {
+        path: "<stderr>".to_string(),
         source,
     })
+}
+
+fn print_tier_line(quiet: bool, message: &str) -> Result<(), ScanError> {
+    if quiet {
+        return Ok(());
+    }
+    let mut stderr = std::io::stderr().lock();
+    write_tier_line(&mut stderr, quiet, message)
 }
 
 fn tier_status(enabled: bool, had_targets: bool, findings: bool) -> &'static str {
@@ -372,6 +447,7 @@ fn format_gobinary_status(enabled: bool, scanned_paths: usize, findings: bool) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use tempfile::TempDir;
 
     #[test]
@@ -418,18 +494,103 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let options = ScanOptions {
             target: tmp.path().to_path_buf(),
-            config: None,
-            ignorefile: None,
-            severity: None,
-            exit_code: 1,
-            include_gobinary: false,
             repo_only: true,
             toolchain_only: true,
+            ..ScanOptions::default()
         };
 
         assert!(matches!(
             run_scan(&options),
             Err(ScanError::ConflictingTiers)
         ));
+    }
+
+    #[test]
+    fn resolve_ignorefile_prefers_explicit_then_yaml_then_plain_trivyignore() {
+        let tmp = TempDir::new().unwrap();
+
+        assert_eq!(resolve_ignorefile(tmp.path(), None), None);
+
+        // Directory named .trivyignore should not be treated as an ignorefile.
+        fs::create_dir(tmp.path().join(".trivyignore")).unwrap();
+        assert_eq!(resolve_ignorefile(tmp.path(), None), None);
+        fs::remove_dir(tmp.path().join(".trivyignore")).unwrap();
+
+        // Fallback to .trivyignore when .trivyignore.yaml is absent.
+        let plain = tmp.path().join(".trivyignore");
+        fs::write(&plain, "CVE-2020-28500\n").unwrap();
+        assert_eq!(resolve_ignorefile(tmp.path(), None), Some(plain.clone()));
+
+        // Prefer .trivyignore.yaml when both exist.
+        let yaml = tmp.path().join(".trivyignore.yaml");
+        fs::write(&yaml, "vulnerabilities: []\n").unwrap();
+        assert_eq!(resolve_ignorefile(tmp.path(), None), Some(yaml));
+
+        // Explicit --ignorefile always takes precedence.
+        let explicit = tmp.path().join("custom.trivyignore");
+        assert_eq!(
+            resolve_ignorefile(tmp.path(), Some(explicit.clone())),
+            Some(explicit)
+        );
+    }
+
+    #[test]
+    fn build_trivy_scan_args_includes_quiet_ignore_unfixed_and_trailing_args() {
+        let ctx = TrivyRunContext {
+            config: Some(PathBuf::from("trivy.yaml")),
+            ignorefile: Some(PathBuf::from(".trivyignore")),
+            severity: Some("HIGH,CRITICAL".to_string()),
+            quiet: true,
+            ignore_unfixed: true,
+            exit_code: 2,
+            trivy_args: vec!["--skip-db-update".to_string(), "--offline-scan".to_string()],
+        };
+
+        let args = build_trivy_scan_args(
+            "fs",
+            "vuln",
+            Path::new("/tmp/project"),
+            &[".mise/locks"],
+            &ctx,
+        );
+        let strings: Vec<String> = args
+            .into_iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(
+            strings,
+            vec![
+                "fs",
+                "--scanners",
+                "vuln",
+                "--exit-code",
+                "2",
+                "--skip-dirs",
+                ".mise/locks",
+                "--config",
+                "trivy.yaml",
+                "--ignorefile",
+                ".trivyignore",
+                "--severity",
+                "HIGH,CRITICAL",
+                "--quiet",
+                "--ignore-unfixed",
+                "--skip-db-update",
+                "--offline-scan",
+                "/tmp/project",
+            ]
+        );
+    }
+
+    #[test]
+    fn write_tier_line_emits_when_not_quiet_and_suppresses_when_quiet() {
+        let mut buf = Vec::new();
+        write_tier_line(&mut buf, false, "Repository scan").unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "==> Repository scan\n");
+
+        let mut quiet_buf = Vec::new();
+        write_tier_line(&mut quiet_buf, true, "Repository scan").unwrap();
+        assert!(quiet_buf.is_empty());
     }
 }
