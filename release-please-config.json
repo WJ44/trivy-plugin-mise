@@ -12,6 +12,18 @@
         {
           "type": "generic",
           "path": "plugin.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "agent-context/README.project.md"
+        },
+        {
+          "type": "generic",
+          "path": "README.md"
+        },
+        {
+          "type": "generic",
+          "path": "docs/usage.md"
         }
       ]
     }
