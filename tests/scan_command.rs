@@ -41,6 +41,16 @@ const ACCEPTED_LODASH_TRIVYIGNORE: &str = r#"vulnerabilities:
 licenses: []
 "#;
 
+const ACCEPTED_HIGH_ONLY_LODASH_TRIVYIGNORE: &str = r#"vulnerabilities:
+  - id: CVE-2021-23337
+    statement: "Ignore high severity to leave only medium CVEs unignored"
+  - id: CVE-2025-13465
+    statement: "Ignore other CVEs"
+  - id: CVE-2026-4800
+    statement: "Ignore other CVEs"
+licenses: []
+"#;
+
 #[test]
 fn scan_clean_repository_exits_zero() {
     let output = bin()
@@ -128,6 +138,75 @@ fn scan_detects_vulnerable_sidecar_lockfile_and_respects_trivyignore() {
         "expected exit 0 when sidecar vulnerabilities are accepted in .trivyignore.yaml, got {:?}",
         ignored_output.status.code()
     );
+}
+
+#[test]
+fn scan_forwards_config_and_severity_flags_to_trivy() {
+    let tmp = TempDir::new().unwrap();
+    fs::write(tmp.path().join("package-lock.json"), VULN_PACKAGE_LOCK).unwrap();
+    let sidecar_dir = tmp.path().join(".mise/locks/npm-vuln/1.0.0");
+    fs::create_dir_all(&sidecar_dir).unwrap();
+    fs::write(sidecar_dir.join("package-lock.json"), VULN_PACKAGE_LOCK).unwrap();
+    fs::write(
+        tmp.path().join(".trivyignore.yaml"),
+        ACCEPTED_HIGH_ONLY_LODASH_TRIVYIGNORE,
+    )
+    .unwrap();
+
+    // With MEDIUM CVE-2020-28500 unignored, --severity MEDIUM,HIGH,CRITICAL fails.
+    let medium_severity_output = bin()
+        .arg("scan")
+        .arg(tmp.path())
+        .args(["--severity", "MEDIUM,HIGH,CRITICAL"])
+        .output()
+        .expect("failed to run scan with --severity MEDIUM,HIGH,CRITICAL");
+    assert_eq!(medium_severity_output.status.code(), Some(1));
+
+    // Forwarding --severity HIGH,CRITICAL filters out MEDIUM CVE-2020-28500 across both repo and sidecar scans.
+    let high_severity_output = bin()
+        .arg("scan")
+        .arg(tmp.path())
+        .args(["--severity", "HIGH,CRITICAL"])
+        .output()
+        .expect("failed to run scan with --severity HIGH,CRITICAL");
+    assert!(
+        high_severity_output.status.success(),
+        "expected exit 0 when --severity HIGH,CRITICAL filters out medium CVE, got {:?}",
+        high_severity_output.status.code()
+    );
+
+    // Forwarding --config with a custom trivy configuration setting severity to HIGH,CRITICAL also succeeds.
+    let high_only_config = tmp.path().join("custom-trivy-high.yaml");
+    fs::write(&high_only_config, "severity:\n  - HIGH\n  - CRITICAL\n").unwrap();
+
+    let config_pass_output = bin()
+        .arg("scan")
+        .arg(tmp.path())
+        .arg("--config")
+        .arg(&high_only_config)
+        .output()
+        .expect("failed to run scan with --config high-only");
+    assert!(
+        config_pass_output.status.success(),
+        "expected exit 0 when --config restricts severity to HIGH,CRITICAL, got {:?}",
+        config_pass_output.status.code()
+    );
+
+    let medium_config = tmp.path().join("custom-trivy-medium.yaml");
+    fs::write(
+        &medium_config,
+        "severity:\n  - MEDIUM\n  - HIGH\n  - CRITICAL\n",
+    )
+    .unwrap();
+
+    let config_fail_output = bin()
+        .arg("scan")
+        .arg(tmp.path())
+        .arg("--config")
+        .arg(&medium_config)
+        .output()
+        .expect("failed to run scan with --config medium");
+    assert_eq!(config_fail_output.status.code(), Some(1));
 }
 
 #[cfg(unix)]
