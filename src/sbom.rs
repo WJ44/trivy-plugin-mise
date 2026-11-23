@@ -94,7 +94,8 @@ pub fn generate_sbom(project_root: &Path, options: &SbomOptions) -> Result<Value
         },
     )?;
 
-    let merged = merge_toolchain_bom(&mise_components, &sidecar_json)?;
+    let include_dependencies = options.mode == SbomMode::Components;
+    let merged = merge_toolchain_bom(&mise_components, &sidecar_json, include_dependencies)?;
 
     match options.mode {
         SbomMode::Formulation => build_formulation_bom(project_root, merged.components),
@@ -144,6 +145,7 @@ struct MergedToolchain {
 fn merge_toolchain_bom(
     mise_components: &[CycloneDxComponent],
     sidecar_json: &Value,
+    include_dependencies: bool,
 ) -> Result<MergedToolchain, SbomError> {
     let mut components = Vec::with_capacity(mise_components.len());
     let mut seen_refs = HashSet::new();
@@ -218,6 +220,13 @@ fn merge_toolchain_bom(
         components.push(comp);
     }
 
+    if !include_dependencies {
+        return Ok(MergedToolchain {
+            components,
+            dependencies: Vec::new(),
+        });
+    }
+
     let mut dep_edges: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut has_incoming = HashSet::new();
 
@@ -280,6 +289,10 @@ fn build_formulation_bom(
         SbomError::InvalidBomStructure("Trivy CycloneDX output is not a JSON object".to_string())
     })?;
 
+    obj.insert(
+        "$schema".to_string(),
+        Value::String(CYCLONEDX_1_7_SCHEMA.to_string()),
+    );
     obj.insert(
         "specVersion".to_string(),
         Value::String(CYCLONEDX_SPEC_VERSION.to_string()),
@@ -481,10 +494,14 @@ mod tests {
             ]
         });
 
-        let merged = merge_toolchain_bom(&mise_components, &sidecar_json).unwrap();
+        let merged = merge_toolchain_bom(&mise_components, &sidecar_json, true).unwrap();
         assert_eq!(merged.components.len(), 2);
         assert!(merged.components[0].get("licenses").is_some());
         assert_eq!(merged.components[1]["name"], "chalk");
         assert_eq!(merged.dependencies.len(), 2);
+
+        let merged_no_deps = merge_toolchain_bom(&mise_components, &sidecar_json, false).unwrap();
+        assert_eq!(merged_no_deps.components.len(), 2);
+        assert!(merged_no_deps.dependencies.is_empty());
     }
 }

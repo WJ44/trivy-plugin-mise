@@ -62,6 +62,10 @@ fn sbom_formulation_mode_on_repo_with_app_lockfile_and_mise_lock() {
     let raw = fs::read_to_string(&output_path).unwrap();
     let bom: Value = serde_json::from_str(&raw).unwrap();
 
+    assert_eq!(
+        bom["$schema"],
+        "http://cyclonedx.org/schema/bom-1.7.schema.json"
+    );
     assert_eq!(bom["bomFormat"], "CycloneDX");
     assert_eq!(bom["specVersion"], "1.7");
 
@@ -97,7 +101,7 @@ fn sbom_formulation_mode_on_repo_with_app_lockfile_and_mise_lock() {
         "expected lefthook from mise.lock in formulation[]"
     );
     assert!(
-        formula_purls.contains("pkg:npm/prettier@3.9.10"),
+        formula_purls.contains("pkg:npm/prettier@3.10.1"),
         "expected prettier in formulation[]"
     );
     assert!(
@@ -216,7 +220,7 @@ fn sbom_components_mode_emits_valid_cyclonedx_accepted_by_trivy_sbom() {
 
     let components = bom["components"].as_array().unwrap();
     let purls = collect_purls(components);
-    assert!(purls.contains("pkg:npm/prettier@3.9.10"));
+    assert!(purls.contains("pkg:npm/prettier@3.10.1"));
     assert!(purls.contains("pkg:npm/%40commitlint/cli@21.2.4"));
     assert!(
         !purls.iter().any(|p| p.starts_with("pkg:cargo/clap@")),
