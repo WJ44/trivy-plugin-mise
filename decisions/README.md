@@ -5,12 +5,6 @@ this repository.
 
 - **Project decisions** live directly in `decisions/` (`001-<slug>.md`,
   `002-<slug>.md`, ...) and are indexed below.
-- **Baseline harness decisions** inherited across projects live in
-  [`decisions/harness/`](harness/README.md).
-
-For the full template, metadata definitions (`Status` vs. `Finality`), and
-instructions on when and how to record or supersede a decision, see
-[`agent-context/harness/decisions.md`](../agent-context/harness/decisions.md).
 
 ## Finality Levels at a Glance
 
@@ -23,6 +17,7 @@ instructions on when and how to record or supersede a decision, see
 
 ## Project Decisions
 
-| ID                                      | Title                                          | Status | Finality | Date       |
-| --------------------------------------- | ---------------------------------------------- | ------ | -------- | ---------- |
+<!-- prettier-ignore -->
+| ID | Title | Status | Finality | Date |
+| --- | --- | --- | --- | --- |
 | [001](001-language-and-distribution.md) | Implementation language and distribution model | Active | Standard | 2026-11-13 |
