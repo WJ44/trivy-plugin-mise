@@ -1,6 +1,6 @@
 # 010: Markdownlint evaluation
 
-- **Status:** Active
+- **Status:** Superseded by [031](031-rumdl-and-decision-validation.md)
 - **Finality:** Provisional
 - **Scope:** `*.md`, `lefthook.yml`, `mise.toml`
 - **Date:** 2026-11-08

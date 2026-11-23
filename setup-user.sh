@@ -43,7 +43,7 @@ grep -qxF "$SHIM_LINE" ~/.bashrc 2>/dev/null || echo "$SHIM_LINE" >>~/.bashrc
 export PATH="$REPO_ROOT/shim:$PATH"
 
 # configure git identity and credential helper to act as the agent bot
-SOCKET="/var/run/huddle/agent-token.sock"
+SOCKET="${AGENT_TOKEN_SOCKET:-/var/run/huddle/agent-token.sock}"
 if [[ ! -S "$SOCKET" ]] || ! token_json=$(curl -fsS --max-time 5 --unix-socket "$SOCKET" http://localhost/token); then
   echo "Error: agent token socket not reachable at $SOCKET." >&2
   echo "       Start host/agent-token-server.py on the host before running $(basename "$0")." >&2
@@ -63,19 +63,33 @@ git config --global --add credential.https://github.com.helper "!gh auth git-cre
 CLAUDE_SETTINGS_DIR="$REPO_ROOT/.claude"
 CLAUDE_SETTINGS_FILE="$CLAUDE_SETTINGS_DIR/settings.local.json"
 
-mkdir -p "$REPO_ROOT/memory" "$CLAUDE_SETTINGS_DIR"
+mkdir -p "$REPO_ROOT/agent-context/memory" "$CLAUDE_SETTINGS_DIR"
 if [ ! -f "$CLAUDE_SETTINGS_FILE" ]; then
   echo "{}" >"$CLAUDE_SETTINGS_FILE"
 fi
 
 tmp=$(mktemp)
 jq \
-  --arg dir "$REPO_ROOT/memory" \
+  --arg dir "$REPO_ROOT/agent-context/memory" \
   '
   ."$schema" = "https://json.schemastore.org/claude-code-settings.json" |
   .autoMemoryEnabled = true |
   .autoMemoryDirectory = $dir
   ' "$CLAUDE_SETTINGS_FILE" >"$tmp" && mv "$tmp" "$CLAUDE_SETTINGS_FILE"
+
+CLAUDE_STATE_FILE="$HOME/.claude.json"
+if [ ! -f "$CLAUDE_STATE_FILE" ]; then
+  echo "{}" >"$CLAUDE_STATE_FILE"
+  chmod 600 "$CLAUDE_STATE_FILE"
+fi
+
+tmp=$(mktemp)
+jq \
+  --arg ws "$REPO_ROOT" \
+  '
+  .projects = (.projects // {}) |
+  .projects[$ws] = ((.projects[$ws] // {}) + {"hasTrustDialogAccepted": true})
+  ' "$CLAUDE_STATE_FILE" >"$tmp" && mv "$tmp" "$CLAUDE_STATE_FILE"
 
 # configure antigravity (agy) settings
 AGY_SETTINGS_DIR="$HOME/.gemini/antigravity-cli"
