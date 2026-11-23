@@ -100,7 +100,7 @@ Pin `trivy` and `trivy-plugin-mise` in your repository's `mise.toml` using the
 ```toml
 [tools]
 trivy = "0.76.2"
-"github:WJ44/trivy-plugin-mise" = "1.1.0"
+"github:WJ44/trivy-plugin-mise" = "1.1.0" # x-release-please-version
 ```
 
 Install the tools (and optionally run `mise lock` to lock platform URLs and
@@ -398,7 +398,7 @@ Add `sbom` and `scan` tasks to your repository's `mise.toml`:
 ```toml
 [tools]
 trivy = "0.76.2"
-"github:WJ44/trivy-plugin-mise" = "1.1.0"
+"github:WJ44/trivy-plugin-mise" = "1.1.0" # x-release-please-version
 
 [tasks.sbom]
 description = "Generate CycloneDX SBOM (sbom.cdx.json)"

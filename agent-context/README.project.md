@@ -72,7 +72,7 @@ Pin in `mise.toml` using the `github:` backend (alongside `trivy`):
 ```toml
 [tools]
 trivy = "0.76.2"
-"github:WJ44/trivy-plugin-mise" = "1.1.0"
+"github:WJ44/trivy-plugin-mise" = "1.1.0" # x-release-please-version
 ```
 
 Then run `mise install` (and `mise lock` to pin platform checksums) and invoke
