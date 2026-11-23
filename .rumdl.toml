@@ -25,6 +25,3 @@ code-blocks = false
 "templates/*.project.md" = ["MD041"]
 # Template copied to decisions/README.md on init; harness/README.md resolves there.
 "templates/decisions-README.md" = ["MD057"]
-# Upstream harness v1.1.0 files linking to upstream-only decisions/002-* and tests/test_agent_token_server.py.
-"agent-context/harness/testing.md" = ["MD057"]
-"decisions/harness/033-downstream-release-automation.md" = ["MD057"]

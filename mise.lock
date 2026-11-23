@@ -49,6 +49,53 @@ url = "https://github.com/rvben/rumdl/releases/download/v0.3.5/rumdl-v0.3.5-x86_
 url_api = "https://api.github.com/repos/rvben/rumdl/releases/assets/764100352"
 provenance = "github-attestations"
 
+[[tools."github:WJ44/trivy-plugin-mise"]]
+version = "1.1.0"
+backend = "github:WJ44/trivy-plugin-mise"
+specifiers = ["1.1.0"]
+
+[tools."github:WJ44/trivy-plugin-mise"."platforms.linux-arm64"]
+checksum = "sha256:4efdadef338ccab5dfcfc9a04ccfeb0a80f0f9043d1d26f20fac12d898f122c9"
+url = "https://github.com/WJ44/trivy-plugin-mise/releases/download/v1.1.0/trivy-plugin-mise-linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/WJ44/trivy-plugin-mise/releases/assets/783114046"
+provenance = "github-attestations"
+
+[tools."github:WJ44/trivy-plugin-mise"."platforms.linux-arm64-musl"]
+checksum = "sha256:4efdadef338ccab5dfcfc9a04ccfeb0a80f0f9043d1d26f20fac12d898f122c9"
+url = "https://github.com/WJ44/trivy-plugin-mise/releases/download/v1.1.0/trivy-plugin-mise-linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/WJ44/trivy-plugin-mise/releases/assets/783114046"
+provenance = "github-attestations"
+
+[tools."github:WJ44/trivy-plugin-mise"."platforms.linux-x64"]
+checksum = "sha256:d8b6341adfe5d058465335791a844840cf2596184a53f4b667c6f0b7578638c0"
+url = "https://github.com/WJ44/trivy-plugin-mise/releases/download/v1.1.0/trivy-plugin-mise-linux-x64.tar.gz"
+url_api = "https://api.github.com/repos/WJ44/trivy-plugin-mise/releases/assets/783114043"
+provenance = "github-attestations"
+
+[tools."github:WJ44/trivy-plugin-mise"."platforms.linux-x64-musl"]
+checksum = "sha256:d8b6341adfe5d058465335791a844840cf2596184a53f4b667c6f0b7578638c0"
+url = "https://github.com/WJ44/trivy-plugin-mise/releases/download/v1.1.0/trivy-plugin-mise-linux-x64.tar.gz"
+url_api = "https://api.github.com/repos/WJ44/trivy-plugin-mise/releases/assets/783114043"
+provenance = "github-attestations"
+
+[tools."github:WJ44/trivy-plugin-mise"."platforms.macos-arm64"]
+checksum = "sha256:3d93af0020519394884989a6c941db3f23cd752572ffbf2f002691afd2603566"
+url = "https://github.com/WJ44/trivy-plugin-mise/releases/download/v1.1.0/trivy-plugin-mise-macos-arm64.tar.gz"
+url_api = "https://api.github.com/repos/WJ44/trivy-plugin-mise/releases/assets/783114044"
+provenance = "github-attestations"
+
+[tools."github:WJ44/trivy-plugin-mise"."platforms.macos-x64"]
+checksum = "sha256:831f5d7706f91805bf4d998318a331c53e497ffaa9c4d020d52d553df37f34c8"
+url = "https://github.com/WJ44/trivy-plugin-mise/releases/download/v1.1.0/trivy-plugin-mise-macos-x64.tar.gz"
+url_api = "https://api.github.com/repos/WJ44/trivy-plugin-mise/releases/assets/783114083"
+provenance = "github-attestations"
+
+[tools."github:WJ44/trivy-plugin-mise"."platforms.windows-x64"]
+checksum = "sha256:80cf66b6c668c93d820454887c65176635ac2457e55278ec821fe089ca1a1d18"
+url = "https://github.com/WJ44/trivy-plugin-mise/releases/download/v1.1.0/trivy-plugin-mise-windows-x64.zip"
+url_api = "https://api.github.com/repos/WJ44/trivy-plugin-mise/releases/assets/783114082"
+provenance = "github-attestations"
+
 [[tools."github:newren/git-filter-repo"]]
 version = "2.47.0"
 backend = "github:newren/git-filter-repo"
