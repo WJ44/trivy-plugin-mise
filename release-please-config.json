@@ -8,7 +8,12 @@
     ".": {
       "release-type": "rust",
       "changelog-path": "CHANGELOG.md",
-      "extra-files": ["plugin.yaml"]
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "plugin.yaml"
+        }
+      ]
     }
   }
 }

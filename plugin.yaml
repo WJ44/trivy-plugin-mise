@@ -14,25 +14,25 @@ platforms:
   - selector:
       os: linux
       arch: amd64
-    uri: https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-v0.1.0-linux-x64.tar.gz # x-release-please-version
+    uri: https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-linux-x64.tar.gz # x-release-please-version
     bin: ./trivy-plugin-mise
   - selector:
       os: linux
       arch: arm64
-    uri: https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-v0.1.0-linux-arm64.tar.gz # x-release-please-version
+    uri: https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-linux-arm64.tar.gz # x-release-please-version
     bin: ./trivy-plugin-mise
   - selector:
       os: darwin
       arch: amd64
-    uri: https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-v0.1.0-macos-x64.tar.gz # x-release-please-version
+    uri: https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-macos-x64.tar.gz # x-release-please-version
     bin: ./trivy-plugin-mise
   - selector:
       os: darwin
       arch: arm64
-    uri: https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-v0.1.0-macos-arm64.tar.gz # x-release-please-version
+    uri: https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-macos-arm64.tar.gz # x-release-please-version
     bin: ./trivy-plugin-mise
   - selector:
       os: windows
       arch: amd64
-    uri: https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-v0.1.0-windows-x64.zip # x-release-please-version
+    uri: https://github.com/WJ44/trivy-plugin-mise/releases/download/v0.1.0/trivy-plugin-mise-windows-x64.zip # x-release-please-version
     bin: ./trivy-plugin-mise.exe

@@ -40,9 +40,9 @@ jobs:
             echo "Error: no uri entries found in plugin.yaml"
             exit 1
           fi
-          if echo "${uri_lines}" | grep -qv "releases/download/${TAG}/trivy-plugin-mise-${TAG}-"; then
+          if echo "${uri_lines}" | grep -qv "releases/download/${TAG}/trivy-plugin-mise-"; then
             echo "Error: one or more plugin.yaml platform URIs do not reference ${TAG}:"
-            echo "${uri_lines}" | grep -v "releases/download/${TAG}/trivy-plugin-mise-${TAG}-"
+            echo "${uri_lines}" | grep -v "releases/download/${TAG}/trivy-plugin-mise-"
             exit 1
           fi
 
@@ -116,7 +116,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          tar -czf "dist/trivy-plugin-mise-${{ github.ref_name }}-${{ matrix.archive_suffix }}.tar.gz" \
+          tar -czf "dist/trivy-plugin-mise-${{ matrix.archive_suffix }}.tar.gz" \
             -C "target/${{ matrix.target }}/release" "${{ matrix.bin }}"
 
       - name: Package Windows archive
@@ -126,7 +126,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Compress-Archive `
             -Path "target/${{ matrix.target }}/release/${{ matrix.bin }}" `
-            -DestinationPath "dist/trivy-plugin-mise-${{ github.ref_name }}-${{ matrix.archive_suffix }}.zip"
+            -DestinationPath "dist/trivy-plugin-mise-${{ matrix.archive_suffix }}.zip"
 
       - name: Upload archive artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
