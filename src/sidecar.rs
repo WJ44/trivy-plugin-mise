@@ -378,23 +378,19 @@ pub fn materialize_sidecars(
     Ok(MaterializedWorkspace { temp_dir, entries })
 }
 
-/// Runs `trivy fs --format cyclonedx --quiet` on a materialized workspace and parses the resulting BOM.
-pub fn extract_cyclonedx_from_workspace(
-    workspace: &MaterializedWorkspace,
-) -> Result<TrivyCycloneDxBom, SidecarError> {
-    let has_files = workspace
-        .entries()
-        .iter()
-        .any(|entry| !entry.materialized_files.is_empty());
-    if !has_files {
-        return Ok(TrivyCycloneDxBom::default());
+/// Runs `trivy fs --format cyclonedx --quiet` on `path`, optionally skipping directories, and returns raw JSON.
+pub fn run_trivy_fs_cyclonedx(
+    path: &Path,
+    skip_dirs: &[&str],
+) -> Result<serde_json::Value, SidecarError> {
+    let mut cmd = Command::new("trivy");
+    cmd.args(["fs", "--format", "cyclonedx", "--quiet"]);
+    for dir in skip_dirs {
+        cmd.args(["--skip-dirs", dir]);
     }
+    cmd.arg(path);
 
-    let output = Command::new("trivy")
-        .args(["fs", "--format", "cyclonedx", "--quiet"])
-        .arg(workspace.path())
-        .output()
-        .map_err(SidecarError::TrivyInvocation)?;
+    let output = cmd.output().map_err(SidecarError::TrivyInvocation)?;
 
     if !output.status.success() {
         return Err(SidecarError::TrivyFailed {
@@ -403,7 +399,52 @@ pub fn extract_cyclonedx_from_workspace(
         });
     }
 
-    let bom: TrivyCycloneDxBom = serde_json::from_slice(&output.stdout)?;
+    let bom: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    Ok(bom)
+}
+
+/// Runs `trivy fs --format cyclonedx --quiet` on a materialized workspace and returns raw JSON.
+pub fn extract_cyclonedx_json_from_workspace(
+    workspace: &MaterializedWorkspace,
+) -> Result<serde_json::Value, SidecarError> {
+    let has_files = workspace
+        .entries()
+        .iter()
+        .any(|entry| !entry.materialized_files.is_empty());
+    if !has_files {
+        return Ok(serde_json::json!({
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.7",
+            "components": [],
+            "dependencies": []
+        }));
+    }
+
+    run_trivy_fs_cyclonedx(workspace.path(), &[])
+}
+
+/// Runs `trivy fs --format cyclonedx --quiet` on a materialized workspace and parses the resulting BOM.
+pub fn extract_cyclonedx_from_workspace(
+    workspace: &MaterializedWorkspace,
+) -> Result<TrivyCycloneDxBom, SidecarError> {
+    let json = extract_cyclonedx_json_from_workspace(workspace)?;
+    let bom: TrivyCycloneDxBom = serde_json::from_value(json)?;
+    Ok(bom)
+}
+
+/// End-to-end helper: discovers sidecars, verifies digests, materializes into a temporary workspace,
+/// extracts the raw CycloneDX JSON via Trivy, and cleans up the temporary workspace before returning.
+pub fn extract_sidecar_json(
+    project_root: &Path,
+    lock: Option<&MiseLock>,
+    options: &SidecarOptions,
+) -> Result<serde_json::Value, SidecarError> {
+    let workspace = materialize_sidecars(project_root, lock, options)?;
+    let bom = extract_cyclonedx_json_from_workspace(&workspace)?;
+    workspace.close().map_err(|source| SidecarError::Io {
+        path: std::env::temp_dir().display().to_string(),
+        source,
+    })?;
     Ok(bom)
 }
 
@@ -414,12 +455,8 @@ pub fn extract_sidecar_bom(
     lock: Option<&MiseLock>,
     options: &SidecarOptions,
 ) -> Result<TrivyCycloneDxBom, SidecarError> {
-    let workspace = materialize_sidecars(project_root, lock, options)?;
-    let bom = extract_cyclonedx_from_workspace(&workspace)?;
-    workspace.close().map_err(|source| SidecarError::Io {
-        path: std::env::temp_dir().display().to_string(),
-        source,
-    })?;
+    let json = extract_sidecar_json(project_root, lock, options)?;
+    let bom: TrivyCycloneDxBom = serde_json::from_value(json)?;
     Ok(bom)
 }
 

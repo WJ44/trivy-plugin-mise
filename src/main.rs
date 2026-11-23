@@ -2,6 +2,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use trivy_plugin_mise::cli::{Cli, Commands};
+use trivy_plugin_mise::sbom::{SbomOptions, generate_sbom, write_sbom};
 use trivy_plugin_mise::scan::{ScanOptions, run_scan};
 
 fn main() -> ExitCode {
@@ -12,9 +13,26 @@ fn main() -> ExitCode {
             println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
-        Commands::Sbom => {
-            eprintln!("error: `sbom` is not yet implemented");
-            ExitCode::FAILURE
+        Commands::Sbom {
+            mode,
+            output,
+            platform,
+            no_verify_digests,
+            path,
+        } => {
+            let options = SbomOptions {
+                mode,
+                target_platform: platform,
+                verify_digests: !no_verify_digests,
+            };
+            match generate_sbom(&path, &options).and_then(|bom| write_sbom(&bom, output.as_deref()))
+            {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    ExitCode::FAILURE
+                }
+            }
         }
         Commands::Scan(args) => {
             let options = ScanOptions::from(args);
