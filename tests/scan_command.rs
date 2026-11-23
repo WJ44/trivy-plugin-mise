@@ -1,8 +1,19 @@
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard};
 
 use tempfile::TempDir;
+
+// Serialize Trivy-invoking tests so concurrent threads do not race to download
+// or lock the shared Trivy vulnerability database on fresh CI runners.
+static TRIVY_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_trivy() -> MutexGuard<'static, ()> {
+    TRIVY_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_trivy-plugin-mise"))
@@ -53,6 +64,7 @@ licenses: []
 
 #[test]
 fn scan_clean_repository_exits_zero() {
+    let _guard = lock_trivy();
     let output = bin()
         .args(["scan", "."])
         .current_dir(repo_root())
@@ -70,6 +82,7 @@ fn scan_clean_repository_exits_zero() {
 
 #[test]
 fn scan_detects_vulnerable_repo_dependency_and_respects_trivyignore() {
+    let _guard = lock_trivy();
     let tmp = TempDir::new().unwrap();
     fs::write(tmp.path().join("package-lock.json"), VULN_PACKAGE_LOCK).unwrap();
     fs::write(tmp.path().join(".trivyignore.yaml"), EMPTY_TRIVYIGNORE).unwrap();
@@ -109,6 +122,7 @@ fn scan_detects_vulnerable_repo_dependency_and_respects_trivyignore() {
 
 #[test]
 fn scan_detects_vulnerable_sidecar_lockfile_and_respects_trivyignore() {
+    let _guard = lock_trivy();
     let tmp = TempDir::new().unwrap();
     let sidecar_dir = tmp.path().join(".mise/locks/npm-vuln/1.0.0");
     fs::create_dir_all(&sidecar_dir).unwrap();
@@ -142,6 +156,7 @@ fn scan_detects_vulnerable_sidecar_lockfile_and_respects_trivyignore() {
 
 #[test]
 fn scan_forwards_config_and_severity_flags_to_trivy() {
+    let _guard = lock_trivy();
     let tmp = TempDir::new().unwrap();
     fs::write(tmp.path().join("package-lock.json"), VULN_PACKAGE_LOCK).unwrap();
     let sidecar_dir = tmp.path().join(".mise/locks/npm-vuln/1.0.0");
@@ -213,6 +228,8 @@ fn scan_forwards_config_and_severity_flags_to_trivy() {
 #[test]
 fn scan_include_gobinary_scans_active_mise_install_paths() {
     use std::os::unix::fs::PermissionsExt;
+
+    let _guard = lock_trivy();
 
     let tmp = TempDir::new().unwrap();
     let project_dir = tmp.path().join("project");
