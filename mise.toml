@@ -16,15 +16,16 @@ ripgrep = "16.0.0"
 yq = "4.54.3"
 "github:newren/git-filter-repo" = "2.47.0"
 "aqua:rvben/rumdl" = "0.3.5"
+"github:WJ44/trivy-plugin-mise" = "1.1.0"
 rust = { version = "1.100.0", components = ["rustfmt", "clippy"] }
 
 [tasks.sbom]
 description = "Generate CycloneDX JSON Software Bill of Materials (SBOM)"
-run = "bin/mise-sbom"
+run = "trivy-plugin-mise sbom --output sbom.cdx.json"
 
 [tasks.scan]
 description = "Scan repository and toolchain for vulnerabilities and licenses"
-run = "bin/mise-sbom scan"
+run = "trivy-plugin-mise scan"
 
 [tasks.test]
 description = "Run Rust unit and integration tests"
