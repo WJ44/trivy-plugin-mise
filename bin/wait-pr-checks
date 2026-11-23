@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# Wait for post-push PR metadata, conflict detection, and CI check registration,
+# then watch checks until completion.
+set -euo pipefail
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [<pr>] [OPTIONS]
+
+Wait for GitHub to sync PR headRefOid to HEAD (or --commit), abort immediately
+on merge conflicts, wait for CI checks to register, and run \`gh pr checks --watch\`.
+
+Options:
+  --commit <sha>      Expected head commit SHA (default: git rev-parse HEAD)
+  --timeout <secs>    Max seconds to wait for metadata/check registration (default: 120)
+  --interval <secs>   Refresh interval in seconds for \`gh pr checks --watch\` (default: 10)
+  --fail-fast         Pass \`--fail-fast\` to \`gh pr checks --watch\`
+  -h, --help          Show this help message
+
+Exit codes:
+  0  All PR checks passed
+  1  Checks failed, timed out, or CLI/API error
+  2  PR has merge conflicts (mergeable=CONFLICTING or mergeStateStatus=DIRTY)
+EOF
+}
+
+PR=""
+COMMIT="HEAD"
+TIMEOUT=120
+INTERVAL=10
+FAIL_FAST=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+  --commit)
+    [[ $# -ge 2 ]] || {
+      echo "Error: --commit requires a value." >&2
+      exit 1
+    }
+    COMMIT="$2"
+    shift 2
+    ;;
+  --timeout)
+    [[ $# -ge 2 ]] || {
+      echo "Error: --timeout requires a value." >&2
+      exit 1
+    }
+    TIMEOUT="$2"
+    shift 2
+    ;;
+  --interval)
+    [[ $# -ge 2 ]] || {
+      echo "Error: --interval requires a value." >&2
+      exit 1
+    }
+    INTERVAL="$2"
+    shift 2
+    ;;
+  --fail-fast)
+    FAIL_FAST=true
+    shift
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  -*)
+    echo "Error: Unknown option '$1'." >&2
+    usage >&2
+    exit 1
+    ;;
+  *)
+    if [[ -n "$PR" ]]; then
+      echo "Error: Unexpected positional argument '$1'." >&2
+      usage >&2
+      exit 1
+    fi
+    PR="$1"
+    shift
+    ;;
+  esac
+done
+
+for cmd in git gh jq; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: '$cmd' is required but not installed." >&2
+    exit 1
+  fi
+done
+
+if ! [[ "$TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Error: --timeout must be a positive integer (got '$TIMEOUT')." >&2
+  exit 1
+fi
+if ! [[ "$INTERVAL" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Error: --interval must be a positive integer (got '$INTERVAL')." >&2
+  exit 1
+fi
+
+TARGET_SHA=$(git rev-parse --verify "${COMMIT}^{commit}")
+PR_ARGS=()
+if [[ -n "$PR" ]]; then
+  PR_ARGS=("$PR")
+fi
+
+# Short backoff sequence: 2s, 3s, 5s, 5s...
+BACKOFFS=(2 3 5)
+attempt=0
+start_ts=$SECONDS
+head_matched_ts=""
+last_state="initializing"
+pr_number=""
+remote_sha=""
+base_ref=""
+
+while true; do
+  if ! pr_json=$(gh pr view "${PR_ARGS[@]}" --json number,headRefOid,baseRefName,mergeable,mergeStateStatus); then
+    exit 1
+  fi
+
+  readarray -t pr_fields < <(
+    jq -r '
+      (.number | tostring),
+      (.headRefOid // ""),
+      (.baseRefName // ""),
+      (.mergeable // "UNKNOWN"),
+      (.mergeStateStatus // "UNKNOWN")
+    ' <<<"$pr_json"
+  )
+  pr_number="${pr_fields[0]}"
+  remote_sha="${pr_fields[1]}"
+  base_ref="${pr_fields[2]}"
+  mergeable="${pr_fields[3]}"
+  merge_state="${pr_fields[4]}"
+
+  if [[ "$remote_sha" != "$TARGET_SHA" ]]; then
+    last_state="head_mismatch"
+  else
+    if [[ -z "$head_matched_ts" ]]; then
+      head_matched_ts=$SECONDS
+    fi
+
+    if [[ "$mergeable" == "CONFLICTING" || "$merge_state" == "DIRTY" ]]; then
+      echo "Error: PR #${pr_number} has merge conflicts with origin/${base_ref} (mergeable=${mergeable}, mergeStateStatus=${merge_state})." >&2
+      echo "Fetch and merge origin/${base_ref} before waiting for CI." >&2
+      exit 2
+    fi
+
+    if [[ "$mergeable" == "UNKNOWN" ]]; then
+      last_state="mergeable_unknown"
+    fi
+
+    checks_out=""
+    checks_rc=0
+    checks_out=$(gh pr checks "${PR_ARGS[@]}" --json bucket,name,state,workflow 2>/dev/null) || checks_rc=$?
+    checks_count=0
+    if [[ "$checks_rc" -eq 0 || "$checks_rc" -eq 1 || "$checks_rc" -eq 8 ]] &&
+      jq -e 'type == "array"' >/dev/null 2>&1 <<<"$checks_out"; then
+      checks_count=$(jq 'length' <<<"$checks_out")
+    fi
+
+    # Proceed to watch once mergeable has settled (or after 30s if checks are
+    # already registered) and at least one check is reported for HEAD.
+    mergeable_age=$((SECONDS - head_matched_ts))
+    if ((checks_count > 0)) && [[ "$mergeable" != "UNKNOWN" || $mergeable_age -ge 30 ]]; then
+      break
+    fi
+
+    if [[ "$mergeable" != "UNKNOWN" ]]; then
+      last_state="no_checks_yet (checks_count=${checks_count}, checks_rc=${checks_rc})"
+    fi
+  fi
+
+  elapsed=$((SECONDS - start_ts))
+  if ((elapsed >= TIMEOUT)); then
+    case "$last_state" in
+    head_mismatch)
+      echo "Error: Timed out after ${TIMEOUT}s waiting for PR #${pr_number} headRefOid (${remote_sha}) to match ${TARGET_SHA}." >&2
+      ;;
+    mergeable_unknown)
+      echo "Error: Timed out after ${TIMEOUT}s waiting for PR #${pr_number} mergeability to settle (still UNKNOWN)." >&2
+      ;;
+    *)
+      echo "Error: Timed out after ${TIMEOUT}s waiting for CI checks on PR #${pr_number} (${TARGET_SHA}) to register (${last_state})." >&2
+      ;;
+    esac
+    exit 1
+  fi
+
+  idx=$attempt
+  if ((idx >= ${#BACKOFFS[@]})); then
+    idx=$((${#BACKOFFS[@]} - 1))
+  fi
+  delay=${BACKOFFS[$idx]}
+  remaining=$((TIMEOUT - elapsed))
+  if ((delay > remaining)); then
+    delay=$remaining
+  fi
+  sleep "$delay"
+  attempt=$((attempt + 1))
+done
+
+WATCH_ARGS=("${PR_ARGS[@]}" --watch --interval "$INTERVAL")
+if [[ "$FAIL_FAST" == "true" ]]; then
+  WATCH_ARGS+=(--fail-fast)
+fi
+
+exec gh pr checks "${WATCH_ARGS[@]}"
