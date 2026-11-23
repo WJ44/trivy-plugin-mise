@@ -21,8 +21,8 @@ fn materializes_aube_lockfiles_as_pnpm_lock_and_cleans_up() {
     let ws_path = workspace.path().to_path_buf();
     assert!(ws_path.is_dir());
 
-    let prettier_pnpm = ws_path.join("npm-prettier/3.9.10/pnpm-lock.yaml");
-    let prettier_pkg = ws_path.join("npm-prettier/3.9.10/package.json");
+    let prettier_pnpm = ws_path.join("npm-prettier/3.10.1/pnpm-lock.yaml");
+    let prettier_pkg = ws_path.join("npm-prettier/3.10.1/package.json");
     let commitlint_pnpm = ws_path.join("npm-commitlint-cli/21.2.4/pnpm-lock.yaml");
     let commitlint_pkg = ws_path.join("npm-commitlint-cli/21.2.4/package.json");
 
@@ -37,7 +37,7 @@ fn materializes_aube_lockfiles_as_pnpm_lock_and_cleans_up() {
     // Ensure .mise/locks/ was not modified in place
     assert!(
         !root
-            .join(".mise/locks/npm-prettier/3.9.10/pnpm-lock.yaml")
+            .join(".mise/locks/npm-prettier/3.10.1/pnpm-lock.yaml")
             .exists()
     );
 
@@ -51,15 +51,15 @@ fn materializes_aube_lockfiles_as_pnpm_lock_and_cleans_up() {
 #[test]
 fn digest_verification_detects_mismatch_and_can_be_skipped() {
     let tmp = TempDir::new().expect("create temp project");
-    let sidecar_dir = tmp.path().join(".mise/locks/npm-prettier/3.9.10");
+    let sidecar_dir = tmp.path().join(".mise/locks/npm-prettier/3.10.1");
     fs::create_dir_all(&sidecar_dir).unwrap();
     fs::copy(
-        repo_root().join(".mise/locks/npm-prettier/3.9.10/aube-lock.yaml"),
+        repo_root().join(".mise/locks/npm-prettier/3.10.1/aube-lock.yaml"),
         sidecar_dir.join("aube-lock.yaml"),
     )
     .unwrap();
     fs::copy(
-        repo_root().join(".mise/locks/npm-prettier/3.9.10/package.json"),
+        repo_root().join(".mise/locks/npm-prettier/3.10.1/package.json"),
         sidecar_dir.join("package.json"),
     )
     .unwrap();
@@ -68,8 +68,8 @@ fn digest_verification_detects_mismatch_and_can_be_skipped() {
 lockfile_version = 3
 
 [[tools."npm:prettier"]]
-version = "3.9.10"
-aube = { path = ".mise/locks/npm-prettier/3.9.10", digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
+version = "3.10.1"
+aube = { path = ".mise/locks/npm-prettier/3.10.1", digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
 backend = "npm:prettier"
 "#;
     let lock = MiseLock::from_str(lock_toml).unwrap();
@@ -88,7 +88,7 @@ backend = "npm:prettier"
     .expect("materialization should succeed when digest verification is disabled");
     assert!(
         ws.path()
-            .join("npm-prettier/3.9.10/pnpm-lock.yaml")
+            .join("npm-prettier/3.10.1/pnpm-lock.yaml")
             .is_file()
     );
 }
@@ -125,9 +125,9 @@ fn extracts_direct_and_transitive_npm_components_and_dependencies_via_trivy() {
     );
 
     let prettier = bom
-        .find_by_purl("pkg:npm/prettier@3.9.10")
+        .find_by_purl("pkg:npm/prettier@3.10.1")
         .expect("prettier component should be extracted");
-    assert_eq!(prettier.version.as_deref(), Some("3.9.10"));
+    assert_eq!(prettier.version.as_deref(), Some("3.10.1"));
 
     let commitlint = bom
         .find_by_purl("pkg:npm/%40commitlint/cli@21.2.4")
