@@ -36,7 +36,7 @@ fi
 
 if [[ -z $token ]]; then
   echo "gh: unable to reach the agent token socket at $SOCKET." >&2
-  echo "Start host/agent-token-server.py on the host with --socket /tmp/dc-sockets/<container-name>/agent-token.sock." >&2
+  echo "Start host/agent-token-server.py --key /path/to/app.pem on the host." >&2
   exit 1
 fi
 

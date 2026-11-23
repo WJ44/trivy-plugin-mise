@@ -52,6 +52,8 @@ pub struct LockedTool {
     pub sidecars: BTreeMap<String, SidecarLock>,
     /// Per-platform asset metadata keyed by platform triple (for example `"linux-x64"`).
     pub platforms: BTreeMap<String, PlatformAsset>,
+    /// Additional unrecognized top-level tool fields preserved for forward compatibility.
+    pub extra: BTreeMap<String, toml::Value>,
 }
 
 impl LockedTool {
@@ -177,6 +179,7 @@ fn parse_locked_tool(tool_name: &str, raw: RawLockedTool) -> Result<LockedTool, 
 
     let mut platforms = BTreeMap::new();
     let mut sidecars = BTreeMap::new();
+    let mut extra = BTreeMap::new();
 
     for (key, value) in raw.extra {
         if let Some(platform) = key.strip_prefix("platforms.") {
@@ -201,6 +204,8 @@ fn parse_locked_tool(tool_name: &str, raw: RawLockedTool) -> Result<LockedTool, 
                     reason: format!("invalid sidecar entry `{key}`: {err}"),
                 })?;
             sidecars.insert(key, sidecar);
+        } else {
+            extra.insert(key, value);
         }
     }
 
@@ -212,6 +217,7 @@ fn parse_locked_tool(tool_name: &str, raw: RawLockedTool) -> Result<LockedTool, 
         options: raw.options,
         sidecars,
         platforms,
+        extra,
     })
 }
 
@@ -286,5 +292,25 @@ components = "clippy,rustfmt"
 
         let rust = &lock.tools["rust"][0];
         assert_eq!(rust.options["components"].as_str(), Some("clippy,rustfmt"));
+    }
+
+    #[test]
+    fn preserves_unrecognized_tool_fields_in_extra() {
+        let content = r#"
+lockfile_version = 3
+
+[[tools.node]]
+version = "26.13.1"
+backend = "core:node"
+install_env = { NODE_OPTIONS = "--max-old-space-size=4096" }
+source = "mise.toml"
+"#;
+        let lock = MiseLock::from_str(content).unwrap();
+        let node = &lock.tools["node"][0];
+        assert_eq!(node.extra["source"].as_str(), Some("mise.toml"));
+        assert_eq!(
+            node.extra["install_env"]["NODE_OPTIONS"].as_str(),
+            Some("--max-old-space-size=4096")
+        );
     }
 }
