@@ -2,9 +2,20 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard};
 
 use serde_json::Value;
 use tempfile::TempDir;
+
+// Serialize Trivy-invoking tests so concurrent threads do not race to download
+// or lock the shared Trivy cache on fresh CI runners.
+static TRIVY_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_trivy() -> MutexGuard<'static, ()> {
+    TRIVY_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_trivy-plugin-mise"))
@@ -37,6 +48,7 @@ fn collect_purls(components: &[Value]) -> HashSet<String> {
 
 #[test]
 fn sbom_formulation_mode_on_repo_with_app_lockfile_and_mise_lock() {
+    let _guard = lock_trivy();
     let tmp = TempDir::new().expect("create temp dir");
     let output_path = tmp.path().join("sbom.cdx.json");
 
@@ -146,6 +158,7 @@ fn sbom_formulation_mode_on_repo_with_app_lockfile_and_mise_lock() {
 
 #[test]
 fn sbom_formulation_mode_on_mise_only_repo_has_empty_components_and_populated_formulation() {
+    let _guard = lock_trivy();
     let tmp = TempDir::new().expect("create temp mise-only repo");
     fs::copy(repo_root().join("mise.lock"), tmp.path().join("mise.lock")).unwrap();
     copy_dir_all(
@@ -192,6 +205,7 @@ fn sbom_formulation_mode_on_mise_only_repo_has_empty_components_and_populated_fo
 
 #[test]
 fn sbom_components_mode_emits_valid_cyclonedx_accepted_by_trivy_sbom() {
+    let _guard = lock_trivy();
     let tmp = TempDir::new().expect("create temp dir");
     let output_path = tmp.path().join("sbom-tools.cdx.json");
 
