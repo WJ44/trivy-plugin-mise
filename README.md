@@ -31,7 +31,7 @@ Pin in `mise.toml` using the `github:` backend:
 
 ```toml
 [tools]
-"github:WJ44/trivy-plugin-mise" = "0.1.0"
+"github:WJ44/trivy-plugin-mise" = "1.0.0"
 ```
 
 Then run `mise install` (and `mise lock` to pin platform checksums) and invoke
