@@ -4,12 +4,15 @@ maintainer: WJ44
 version: "1.1.0" # x-release-please-version
 summary:
   Trivy plugin for mise CycloneDX SBOM generation and vulnerability scanning
-usage: mise [command]
 output: false
 description: |-
   Trivy plugin and standalone CLI that bridges jdx/mise (mise.toml, mise.lock,
   .mise/locks/) with aquasecurity/trivy for CycloneDX SBOM generation and
   vulnerability scanning.
+
+  Usage:
+    trivy mise [scan] [OPTIONS] [TARGET]
+    trivy mise sbom [OPTIONS] [PATH]
 platforms:
   - selector:
       os: linux

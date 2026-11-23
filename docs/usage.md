@@ -41,12 +41,56 @@ trivy mise sbom --output sbom.cdx.json
 trivy mise scan
 ```
 
-To upgrade or uninstall:
+#### Inspecting Installed Plugin Metadata
+
+List installed plugins or inspect the `mise` plugin's version, summary, and
+usage description (from `plugin.yaml`):
 
 ```bash
-trivy plugin update mise
+trivy plugin list
+trivy plugin info mise
+```
+
+#### Running On the Fly (`trivy plugin run`)
+
+Run the plugin directly without keeping a permanent manual step between install
+and execution:
+
+```bash
+trivy plugin run github.com/WJ44/trivy-plugin-mise scan
+trivy plugin run github.com/WJ44/trivy-plugin-mise sbom --output sbom.cdx.json
+```
+
+#### Running via `TRIVY_RUN_AS_PLUGIN`
+
+Set `TRIVY_RUN_AS_PLUGIN=mise` to make `trivy` dispatch directly to the `mise`
+plugin without repeating `mise` on the command line:
+
+```bash
+TRIVY_RUN_AS_PLUGIN=mise trivy scan
+TRIVY_RUN_AS_PLUGIN=mise trivy sbom --output sbom.cdx.json
+```
+
+#### Upgrading & Uninstalling
+
+Upgrade the installed `mise` plugin to the latest release or uninstall it:
+
+```bash
+trivy plugin upgrade mise
 trivy plugin uninstall mise
 ```
+
+#### Plugin Cache Directory (`XDG_DATA_HOME`)
+
+Trivy resolves the plugin installation directory as follows:
+
+- **`$XDG_DATA_HOME/.trivy/plugins`** when `XDG_DATA_HOME` is set (for example,
+  `$XDG_DATA_HOME/.trivy/plugins/mise/`).
+- **`~/.trivy/plugins`** when `XDG_DATA_HOME` is unset.
+
+Setting `XDG_DATA_HOME` to a temporary or project-scoped directory allows CI
+jobs and integration tests to install and run `trivy-plugin-mise` without
+mutating the user's global `~/.trivy/plugins` directory.
 
 ### Method 2: Standalone Binary via `mise` (`trivy-plugin-mise ...`)
 
