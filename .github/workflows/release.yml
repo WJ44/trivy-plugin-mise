@@ -29,14 +29,20 @@ jobs:
             exit 1
           fi
 
-          plugin_version=$(grep -m1 '^version: ' plugin.yaml | sed -E 's/version: "(.*)"/\1/')
+          plugin_version=$(grep -m1 '^version: ' plugin.yaml | sed -E 's/version: "([^"]+)".*/\1/')
           if [[ "${plugin_version}" != "${expected}" ]]; then
             echo "Error: plugin.yaml version (${plugin_version}) does not match tag ${TAG} (${expected})"
             exit 1
           fi
 
-          if ! grep -q "releases/download/${TAG}/" plugin.yaml; then
-            echo "Error: plugin.yaml platform URIs do not reference ${TAG}"
+          uri_lines=$(grep -E '^[[:space:]]*uri:' plugin.yaml || true)
+          if [[ -z "${uri_lines}" ]]; then
+            echo "Error: no uri entries found in plugin.yaml"
+            exit 1
+          fi
+          if echo "${uri_lines}" | grep -qv "releases/download/${TAG}/trivy-plugin-mise-${TAG}-"; then
+            echo "Error: one or more plugin.yaml platform URIs do not reference ${TAG}:"
+            echo "${uri_lines}" | grep -v "releases/download/${TAG}/trivy-plugin-mise-${TAG}-"
             exit 1
           fi
 
@@ -157,11 +163,15 @@ jobs:
         with:
           subject-path: "dist/*.tar.gz,dist/*.zip,dist/checksums.txt"
 
-      - name: Create GitHub Release
+      - name: Upload or create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp plugin.yaml dist/plugin.yaml
-          gh release create "${GITHUB_REF_NAME}" dist/* \
-            --title "${GITHUB_REF_NAME}" \
-            --generate-notes
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/* \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi
