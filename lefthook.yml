@@ -9,7 +9,7 @@
 #
 # Every tool gets every file and picks out the ones it handles: Prettier skips unknown
 # files (--ignore-unknown), shfmt --find keeps shell files (by extension or shebang).
-# Tools that can't pick out their own files get a glob (tombi, ruff, trivyignore).
+# Tools that can't pick out their own files get a glob (tombi, ruff, trivyignore, rustfmt, clippy).
 #
 # Commands with pipes start with set -o pipefail, so failures aren't hidden.
 
@@ -66,6 +66,9 @@ format:
     - name: ruff
       glob: "*.py"
       run: ruff format {files}
+    - name: rustfmt
+      glob: "*.rs"
+      run: rustfmt --edition 2024 {files}
 
 format-check:
   files: *repo_files
@@ -84,6 +87,9 @@ format-check:
     - name: ruff
       glob: "*.py"
       run: ruff format --check {files}
+    - name: rustfmt
+      glob: "*.rs"
+      run: rustfmt --check --edition 2024 {files}
 
 lint:
   files: *repo_files
@@ -128,6 +134,11 @@ lint:
       name: tombi
       glob: "*.toml"
       run: tombi lint --quiet {files}
+    - name: clippy
+      glob: "*.rs"
+      run: |
+        # {files}
+        cargo clippy --fix --allow-dirty --allow-staged --all-targets -- -D warnings
 
 lint-check:
   files: *repo_files
@@ -147,3 +158,8 @@ lint-check:
     - *decisions_job
     - *trivyignore_job
     - *tombi_lint_job
+    - name: clippy
+      glob: "*.rs"
+      run: |
+        # {files}
+        cargo clippy --all-targets -- -D warnings

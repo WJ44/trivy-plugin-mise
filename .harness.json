@@ -2,6 +2,8 @@
   "upstream": "https://github.com/WJ44/harness.git",
   "ref": "v1.1.0",
   "commit": "8e1bd3efbd50bbc7944f8d1ff3b7204026e1559d",
+  "version": "1.1.0",
+  "mode": "normal",
   "files": {
     "decisions/harness/001-prettier-baseline-formatter.md": "90f4f58b7d486dbcd561b8339300f5b129afae15928404489c567d04793b3363",
     "decisions/harness/002-node-runtime.md": "356b6c865346e5be5b84b48f45bc0d1491b9b9b7b72350eb8daf315dd514ccfd",
@@ -49,6 +51,8 @@
     "agent-context/harness/sbom-and-scanning.md": "46d694ea7b81340a0add765668dc79929d91fb3014d75ac72ccf422e81e40a67",
     "agent-context/harness/task-queue.md": "ffba7bfef4f4a49be8488a535dccffcef780e234fa95963e928561d1d7d5d43e",
     "agent-context/harness/testing.md": "88f6175f3757feca1159a5ae5463dd65e5ff4dcf5200b2b03c8297d14b6b09f9",
+    "docs/harness/harness-cli.md": "832b10ed81acc15e1919dc16c05fa56701853f6b1a99c421883c7caf8210394e",
+    "docs/harness/releasing.md": "241baaf04cda30671aa05b9bfa5b9fd84f77ff00ad6dbcfbf7fb774eabdc421d",
     ".github/ISSUE_TEMPLATE/agent_proposal.md": "7a1d3bd8ad960c44035f3ef7febc2a135ee9d8bd2954d5b358b10429cc003076",
     ".github/ISSUE_TEMPLATE/bug_report.md": "bbecb85cb913c415d932c7281cbc7415806f8293fbd8c2faefe2ebedfe5581f7",
     ".github/ISSUE_TEMPLATE/config.yml": "13064e7bea658e01e718b414fbb7b3b244f36411fe25ee2055c151f7b534547a",
@@ -77,16 +81,21 @@
     "README.template.md": "4fed4eb3f43ba4c642219b769ca2770b79b6cab65295f3c2ef3a29483ab0ca87",
     "CLAUDE.md": "336cc4fbf19beaada7ccf9986414fa91851a8d7a07dfb3ccbe800a69eed0ab49",
     ".agents/hooks.json": "4935a12ca280aedb2c93769f5f188bab2c35b84b21eb903f9f3bc847e76418de",
+    ".agents/plugins/context7/mcp_config.json": "16a7b4af6b04f2e62ba23591f2f817323df41617ecb65664b39e3bf1721942ae",
+    ".agents/plugins/context7/plugin.json": "7f7e8e4fb7bccdea05175dae6d1b679235cdcd71713db660a7ad2701b82a6b43",
     ".claude/settings.json": "3811abe5521bd86cf9ccb1bac37bfe1a4768a34270c0b60ab1e0fb9706b26894",
     ".commitlintrc.json": "274caad59d0f625a71b71d104572d3dbc42a1e7e99d2af22f138fa1519c9a3aa",
     ".editorconfig": "cf8703a025e192f1b7aae6bb67b5914037c89aec1827d53357da2575b0486a5f",
     ".gitattributes": "0bd010559d64071cfad4acb00bd7f027693c4519a54841bc8cfb5e2ae4502fb3",
     ".github/labels.json": "81e934abd7ac9b7226f8ae7ce8e65bff6f3594445d31232125088ae2cf6209da",
     ".github/workflows/ci.yml": "7d408d940f5c617c5491a383a18c98403481c6d7cecacdef621f9fb01f0365a1",
+    ".github/workflows/release-please.yml": "2224cdd06f0e23984fe5f1369c3dad43b8178f62486587650a4eca154676f60f",
     ".gitignore": "7031d2f17f403531b82b4665ac014eb329b8f92423f98e62cb2c533c63a5dccd",
     ".lefthookrc": "9658576604d9893448d3fa6148a62a3ee0ae8595039a844c95e725cd348eddcc",
+    ".mcp.json": "fce4dbd6f3476e6ba72f643e541aa12c70b4a13f129021b9cbcca3fd3bece200",
     ".prettierignore": "87fc7c90bb177bb0711c384b3e3939372af2c3644983f0bd61966c54aca2a870",
     ".prettierrc.json": "289a1b06ab1be11d853838deb70f330bcbf94b624994be3609e8a94051c625b5",
+    ".rumdl.toml": "c24f253d76109763ad8617f4bc04e3a5d1ada30d8aa18327ca02c5ca1dc8dd52",
     "lefthook.yml": "2c3e19a1fcbe3eee0924086aacb95b85951aae728514f03626881d792c69d23e",
     "mise.lock": "cdb00c4101bcec83e8a04e30cd273a9b904650c8f1badfe4c98a079a49e98be7",
     "mise.toml": "ddec7050ae2a0e5e5ab201bffdafebb5772e7eaaca3cb2ba1bc00c2521729cc2",
@@ -95,7 +104,5 @@
     "setup-user.sh": "520cfadc382a1f265c41f5e6910e3e368aa17383a8ae5779c795b21c74897fc1",
     "setup.sh": "b933687ecff242d53de1997c2ac3eae6b55a847f969e58fb795a1e1688438113",
     "trivy.yaml": "19a897242324d4c4c4e8b97399054d2c8814f187f4b1e928ddd9656cd3b79fad"
-  },
-  "version": "1.1.0",
-  "mode": "normal"
+  }
 }

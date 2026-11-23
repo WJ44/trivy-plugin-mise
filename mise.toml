@@ -16,6 +16,7 @@ ripgrep = "16.0.0"
 yq = "4.54.3"
 "github:newren/git-filter-repo" = "2.47.0"
 "aqua:rvben/rumdl" = "0.3.5"
+rust = { version = "1.100.0", components = ["rustfmt", "clippy"] }
 
 [tasks.sbom]
 description = "Generate CycloneDX JSON Software Bill of Materials (SBOM)"
@@ -26,5 +27,5 @@ description = "Scan repository and toolchain for vulnerabilities and licenses"
 run = "bin/mise-sbom scan"
 
 [tasks.test]
-description = "Run automated harness script tests when present"
-run = 'sh -c "if [ -f tests/run.py ]; then exec uv run --script tests/run.py \"\$@\"; elif [ -d tests ]; then echo \"No harness test runner found; configure [tasks.test] for your project.\" >&2; exit 1; else echo \"No tests/ directory found; skipping.\"; fi" _'
+description = "Run Rust unit and integration tests"
+run = "cargo test --locked"
