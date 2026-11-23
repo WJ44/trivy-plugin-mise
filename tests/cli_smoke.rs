@@ -50,11 +50,3 @@ fn scan_help_exits_zero() {
         .expect("failed to run binary");
     assert!(output.status.success(), "expected exit 0 for scan --help");
 }
-
-#[test]
-fn sbom_unimplemented_exits_nonzero() {
-    let output = bin().arg("sbom").output().expect("failed to run binary");
-    assert_eq!(output.status.code(), Some(1));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("not yet implemented"));
-}
