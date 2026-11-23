@@ -58,10 +58,23 @@ see the [**Usage Guide (`docs/usage.md`)**](docs/usage.md).
 
 ### As a Trivy plugin
 
-Install directly from GitHub via `trivy plugin install`:
+Install via the
+[`trivy-plugin-index`](https://github.com/aquasecurity/trivy-plugin-index)
+shorthand (or directly from the GitHub repository URL):
 
 ```bash
+# Refresh the plugin index, search, and install by name (or pinned version)
+trivy plugin update
+trivy plugin search mise
+trivy plugin install mise
+# Or install a specific version:
+trivy plugin install mise@v1.1.0 # x-release-please-version
+
+# Or install directly from GitHub without the plugin index:
 trivy plugin install github.com/WJ44/trivy-plugin-mise
+
+# Upgrade an existing installation or inspect help:
+trivy plugin upgrade mise
 trivy mise --help
 ```
 

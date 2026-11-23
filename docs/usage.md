@@ -27,9 +27,20 @@ invocation methods.
 
 ### Method 1: As a Trivy Plugin (`trivy mise ...`)
 
-Install the plugin from GitHub using Trivy's plugin manager:
+Install the plugin from the
+[`aquasecurity/trivy-plugin-index`](https://github.com/aquasecurity/trivy-plugin-index)
+by shorthand name (or pinned version tag), or directly from GitHub:
 
 ```bash
+# Refresh the local plugin index and search for the mise plugin
+trivy plugin update
+trivy plugin search mise
+
+# Install the latest indexed version (or pin a specific release tag)
+trivy plugin install mise
+trivy plugin install mise@v1.1.0 # x-release-please-version
+
+# Or install directly from the GitHub repository URL (works even before index refresh)
 trivy plugin install github.com/WJ44/trivy-plugin-mise
 ```
 
@@ -55,12 +66,15 @@ trivy plugin info mise
 #### Running On the Fly (`trivy plugin run`)
 
 Run the plugin directly without keeping a permanent manual step between install
-and execution:
+and execution (by indexed name or repository URL):
 
 ```bash
+trivy plugin run mise
+trivy plugin run mise scan
+trivy plugin run mise sbom --output sbom.cdx.json
+
+# Or via full repository path:
 trivy plugin run github.com/WJ44/trivy-plugin-mise
-trivy plugin run github.com/WJ44/trivy-plugin-mise scan
-trivy plugin run github.com/WJ44/trivy-plugin-mise sbom --output sbom.cdx.json
 ```
 
 #### Running via `TRIVY_RUN_AS_PLUGIN`
@@ -76,12 +90,33 @@ TRIVY_RUN_AS_PLUGIN=mise trivy sbom --output sbom.cdx.json
 
 #### Upgrading & Uninstalling
 
-Upgrade the installed `mise` plugin to the latest release or uninstall it:
+Update the local plugin index, upgrade the installed `mise` plugin to the latest
+release, or uninstall it:
 
 ```bash
+trivy plugin update
 trivy plugin upgrade mise
 trivy plugin uninstall mise
 ```
+
+#### Upstream `aquasecurity/trivy-plugin-index` Registration (`plugins/mise.yaml`)
+
+To register `trivy-plugin-mise` in
+[`aquasecurity/trivy-plugin-index`](https://github.com/aquasecurity/trivy-plugin-index)
+so `trivy plugin search mise`, `trivy plugin install mise`, and
+`trivy plugin install mise@v<VERSION>` resolve through the official index, open
+a pull request against `aquasecurity/trivy-plugin-index` adding
+`plugins/mise.yaml`:
+
+```yaml
+name: mise
+repository: github.com/WJ44/trivy-plugin-mise
+```
+
+The upstream index crawler fetches [`plugin.yaml`](../plugin.yaml) from this
+repository and validates its required fields (`name`, `version`, `repository`,
+alphanumeric `maintainer`, `summary`, `output: false`, and platform release
+URIs).
 
 #### Plugin Cache Directory (`XDG_DATA_HOME`)
 

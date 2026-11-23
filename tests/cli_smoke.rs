@@ -76,6 +76,231 @@ fn plugin_yaml_follows_developer_guide_schema() {
 }
 
 #[test]
+fn plugin_yaml_satisfies_trivy_plugin_index_crawler_constraints() {
+    let manifest_json = Command::new("yq")
+        .args(["-o=json", "."])
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("plugin.yaml"))
+        .output()
+        .map(|out| {
+            assert!(
+                out.status.success(),
+                "yq failed to parse plugin.yaml: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            serde_json::from_slice::<serde_json::Value>(&out.stdout)
+                .expect("failed to deserialize yq JSON output for plugin.yaml")
+        })
+        .unwrap_or_else(|_| parse_plugin_yaml_fallback(PLUGIN_YAML));
+
+    let name = manifest_json["name"]
+        .as_str()
+        .expect("plugin.yaml `name` must be a string");
+    assert_eq!(name, "mise", "plugin.yaml `name` must be \"mise\"");
+    assert!(
+        !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+        "plugin.yaml `name` must be non-empty lowercase kebab-case"
+    );
+
+    let version = manifest_json["version"]
+        .as_str()
+        .expect("plugin.yaml `version` must be a string");
+    assert!(
+        !version.is_empty(),
+        "plugin.yaml `version` must be non-empty"
+    );
+    assert_eq!(
+        version,
+        env!("CARGO_PKG_VERSION"),
+        "plugin.yaml `version` must match Cargo.toml package version"
+    );
+
+    let repository = manifest_json["repository"]
+        .as_str()
+        .expect("plugin.yaml `repository` must be a string");
+    assert_eq!(
+        repository, "github.com/WJ44/trivy-plugin-mise",
+        "plugin.yaml `repository` must equal \"github.com/WJ44/trivy-plugin-mise\""
+    );
+
+    let maintainer = manifest_json["maintainer"]
+        .as_str()
+        .expect("plugin.yaml `maintainer` must be a string");
+    assert!(
+        !maintainer.is_empty() && maintainer.chars().all(|c| c.is_ascii_alphanumeric()),
+        "plugin.yaml `maintainer` must be non-empty and strictly ASCII alphanumeric (`validate:\"required,alphanum\"`), got: {maintainer:?}"
+    );
+
+    let summary = manifest_json["summary"]
+        .as_str()
+        .expect("plugin.yaml `summary` must be a string");
+    assert!(
+        !summary.trim().is_empty(),
+        "plugin.yaml `summary` must be non-empty"
+    );
+
+    let output = manifest_json["output"]
+        .as_bool()
+        .expect("plugin.yaml `output` must be a boolean");
+    assert!(
+        !output,
+        "plugin.yaml `output` must be false for a CLI plugin"
+    );
+
+    let platforms = manifest_json["platforms"]
+        .as_array()
+        .expect("plugin.yaml `platforms` must be a non-empty sequence");
+    assert!(
+        !platforms.is_empty(),
+        "plugin.yaml `platforms` must not be empty"
+    );
+
+    let expected_tag_segment = format!("/releases/download/v{version}/");
+    for (idx, platform) in platforms.iter().enumerate() {
+        let os = platform["selector"]["os"]
+            .as_str()
+            .unwrap_or_else(|| panic!("platforms[{idx}].selector.os must be a string"));
+        assert!(
+            matches!(os, "linux" | "darwin" | "windows"),
+            "platforms[{idx}].selector.os has unexpected value: {os:?}"
+        );
+
+        let arch = platform["selector"]["arch"]
+            .as_str()
+            .unwrap_or_else(|| panic!("platforms[{idx}].selector.arch must be a string"));
+        assert!(
+            matches!(arch, "amd64" | "arm64"),
+            "platforms[{idx}].selector.arch has unexpected value: {arch:?}"
+        );
+
+        let uri = platform["uri"]
+            .as_str()
+            .unwrap_or_else(|| panic!("platforms[{idx}].uri must be a string"));
+        assert!(
+            uri.starts_with("https://github.com/WJ44/trivy-plugin-mise/releases/download/")
+                && uri.contains(&expected_tag_segment),
+            "platforms[{idx}].uri ({uri:?}) must match version tag v{version}"
+        );
+
+        let bin = platform["bin"]
+            .as_str()
+            .unwrap_or_else(|| panic!("platforms[{idx}].bin must be a string"));
+        assert!(
+            !bin.trim().is_empty() && bin.starts_with("./trivy-plugin-mise"),
+            "platforms[{idx}].bin must point to `./trivy-plugin-mise[.exe]`, got: {bin:?}"
+        );
+    }
+}
+
+fn parse_plugin_yaml_fallback(yaml: &str) -> serde_json::Value {
+    fn strip_comment_and_quotes(raw: &str) -> String {
+        let trimmed = raw.trim();
+
+        if let Some(rest) = trimmed.strip_prefix('"') {
+            rest.split('"').next().unwrap_or("").to_string()
+        } else {
+            trimmed.split('#').next().unwrap_or("").trim().to_string()
+        }
+    }
+
+    let (header, platforms_raw) = yaml
+        .split_once("\nplatforms:\n")
+        .expect("plugin.yaml must contain `platforms:` section");
+
+    let mut name = String::new();
+    let mut repository = String::new();
+    let mut maintainer = String::new();
+    let mut version = String::new();
+    let mut summary = String::new();
+    let mut output = None;
+    let mut awaiting_summary_continuation = false;
+
+    for line in header.lines() {
+        if awaiting_summary_continuation {
+            if line.starts_with("  ") {
+                summary = strip_comment_and_quotes(line);
+            }
+            awaiting_summary_continuation = false;
+            continue;
+        }
+        if let Some(val) = line.strip_prefix("name:") {
+            name = strip_comment_and_quotes(val);
+        } else if let Some(val) = line.strip_prefix("repository:") {
+            repository = strip_comment_and_quotes(val);
+        } else if let Some(val) = line.strip_prefix("maintainer:") {
+            maintainer = strip_comment_and_quotes(val);
+        } else if let Some(val) = line.strip_prefix("version:") {
+            version = strip_comment_and_quotes(val);
+        } else if let Some(val) = line.strip_prefix("summary:") {
+            let inline = strip_comment_and_quotes(val);
+            if inline.is_empty() {
+                awaiting_summary_continuation = true;
+            } else {
+                summary = inline;
+            }
+        } else if let Some(val) = line.strip_prefix("output:") {
+            output = match strip_comment_and_quotes(val).as_str() {
+                "true" => Some(true),
+                "false" => Some(false),
+                _ => None,
+            };
+        }
+    }
+
+    let mut platforms = Vec::new();
+    let mut current_os = String::new();
+    let mut current_arch = String::new();
+    let mut current_uri = String::new();
+    let mut current_bin = String::new();
+    let mut in_item = false;
+
+    for line in platforms_raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("- selector:") {
+            if in_item {
+                platforms.push(serde_json::json!({
+                    "selector": { "os": current_os, "arch": current_arch },
+                    "uri": current_uri,
+                    "bin": current_bin,
+                }));
+            }
+            in_item = true;
+            current_os.clear();
+            current_arch.clear();
+            current_uri.clear();
+            current_bin.clear();
+        } else if let Some(val) = trimmed.strip_prefix("os:") {
+            current_os = strip_comment_and_quotes(val);
+        } else if let Some(val) = trimmed.strip_prefix("arch:") {
+            current_arch = strip_comment_and_quotes(val);
+        } else if let Some(val) = trimmed.strip_prefix("uri:") {
+            current_uri = strip_comment_and_quotes(val);
+        } else if let Some(val) = trimmed.strip_prefix("bin:") {
+            current_bin = strip_comment_and_quotes(val);
+        }
+    }
+    if in_item {
+        platforms.push(serde_json::json!({
+            "selector": { "os": current_os, "arch": current_arch },
+            "uri": current_uri,
+            "bin": current_bin,
+        }));
+    }
+
+    serde_json::json!({
+        "name": name,
+        "repository": repository,
+        "maintainer": maintainer,
+        "version": version,
+        "summary": summary,
+        "output": output,
+        "platforms": platforms,
+    })
+}
+
+#[test]
 fn trivy_plugin_install_and_invoke_smoke() {
     let temp = tempfile::tempdir().expect("failed to create temp dir");
     let pkg_dir = temp.path().join("pkg");
