@@ -12,7 +12,9 @@ use thiserror::Error;
 use crate::component::{CycloneDxComponent, normalize_lock};
 use crate::mise_lock::{MiseLock, MiseLockError};
 use crate::purl::PurlError;
-use crate::sidecar::{SidecarError, SidecarOptions, extract_sidecar_json, run_trivy_fs_cyclonedx};
+use crate::sidecar::{
+    SidecarError, SidecarOptions, extract_sidecar_json_with_args, run_trivy_fs_cyclonedx_with_args,
+};
 
 const CYCLONEDX_1_7_SCHEMA: &str = "http://cyclonedx.org/schema/bom-1.7.schema.json";
 const CYCLONEDX_SPEC_VERSION: &str = "1.7";
@@ -38,6 +40,7 @@ pub struct SbomOptions {
     pub mode: SbomMode,
     pub target_platform: Option<String>,
     pub verify_digests: bool,
+    pub trivy_args: Vec<String>,
 }
 
 impl Default for SbomOptions {
@@ -46,6 +49,7 @@ impl Default for SbomOptions {
             mode: SbomMode::Formulation,
             target_platform: None,
             verify_digests: true,
+            trivy_args: Vec::new(),
         }
     }
 }
@@ -90,18 +94,19 @@ pub fn generate_sbom(project_root: &Path, options: &SbomOptions) -> Result<Value
         None => Vec::new(),
     };
 
-    let sidecar_json = extract_sidecar_json(
+    let sidecar_json = extract_sidecar_json_with_args(
         project_root,
         lock.as_ref(),
         &SidecarOptions {
             verify_digests: options.verify_digests,
         },
+        &options.trivy_args,
     )?;
 
     let merged = merge_toolchain_bom(&mise_components, &sidecar_json)?;
 
     match options.mode {
-        SbomMode::Formulation => build_formulation_bom(project_root, merged),
+        SbomMode::Formulation => build_formulation_bom(project_root, merged, &options.trivy_args),
         SbomMode::Components => build_components_bom(project_root, merged),
     }
 }
@@ -275,8 +280,12 @@ fn merge_toolchain_bom(
     })
 }
 
-fn build_formulation_bom(project_root: &Path, merged: MergedToolchain) -> Result<Value, SbomError> {
-    let mut base = run_trivy_fs_cyclonedx(project_root, &[".mise/locks"])?;
+fn build_formulation_bom(
+    project_root: &Path,
+    merged: MergedToolchain,
+    trivy_args: &[String],
+) -> Result<Value, SbomError> {
+    let mut base = run_trivy_fs_cyclonedx_with_args(project_root, &[".mise/locks"], trivy_args)?;
     apply_formulation_toolchain(&mut base, merged)?;
     Ok(base)
 }
