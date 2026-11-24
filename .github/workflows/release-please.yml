@@ -13,36 +13,31 @@ permissions:
 
 jobs:
   release-please:
+    if: vars.RELEASE_PLEASE_ENABLED != 'false'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Check release-please prerequisites
-        id: check
         env:
           RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
         run: |
           missing=""
-          if [ ! -f release-please-config.json ] || [ ! -f .release-please-manifest.json ]; then
-            missing="release-please-config.json and/or .release-please-manifest.json"
-          fi
-          if [ -z "$RELEASE_PLEASE_TOKEN" ]; then
-            if [ -n "$missing" ]; then
-              missing="$missing, and RELEASE_PLEASE_TOKEN secret"
-            else
-              missing="RELEASE_PLEASE_TOKEN secret"
+          for item in release-please-config.json .release-please-manifest.json; do
+            if [ ! -f "$item" ]; then
+              missing="${missing:+$missing, }$item"
             fi
+          done
+          if [ -z "$RELEASE_PLEASE_TOKEN" ]; then
+            missing="${missing:+$missing, }RELEASE_PLEASE_TOKEN secret"
           fi
           if [ -n "$missing" ]; then
-            echo "::notice::Skipping release-please: missing $missing."
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "::error::Missing release-please prerequisites: $missing. Add the missing item(s) or set Actions repository variable RELEASE_PLEASE_ENABLED=false to opt out."
+            exit 1
           fi
 
       - name: Run release-please
-        if: steps.check.outputs.ready == 'true'
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}

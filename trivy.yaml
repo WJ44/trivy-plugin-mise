@@ -8,6 +8,8 @@ severity:
   - CRITICAL
 
 scan:
+  disable-telemetry: true
+  skip-version-check: true
   scanners:
     - vuln
     - license

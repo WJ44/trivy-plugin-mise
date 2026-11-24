@@ -39,6 +39,16 @@ fn copy_dir_all(src: &Path, dst: &Path) {
     }
 }
 
+fn copy_harness_mise_lock_as_root(dst_dir: &Path) {
+    let raw = fs::read_to_string(repo_root().join(".config/mise/mise.lock")).unwrap();
+    let adjusted = raw.replace("path = \"locks/", "path = \".mise/locks/");
+    fs::write(dst_dir.join("mise.lock"), adjusted).unwrap();
+    copy_dir_all(
+        &repo_root().join(".config/mise/locks"),
+        &dst_dir.join(".mise/locks"),
+    );
+}
+
 fn collect_purls(components: &[Value]) -> HashSet<String> {
     components
         .iter()
@@ -50,6 +60,21 @@ fn collect_purls(components: &[Value]) -> HashSet<String> {
 fn sbom_formulation_mode_on_repo_with_app_lockfile_and_mise_lock() {
     let _guard = lock_trivy();
     let tmp = TempDir::new().expect("create temp dir");
+    let project_dir = tmp.path().join("project");
+    fs::create_dir_all(&project_dir).unwrap();
+    fs::copy(
+        repo_root().join("Cargo.toml"),
+        project_dir.join("Cargo.toml"),
+    )
+    .unwrap();
+    fs::copy(
+        repo_root().join("Cargo.lock"),
+        project_dir.join("Cargo.lock"),
+    )
+    .unwrap();
+    copy_dir_all(&repo_root().join("src"), &project_dir.join("src"));
+    copy_harness_mise_lock_as_root(&project_dir);
+
     let output_path = tmp.path().join("sbom.cdx.json");
 
     let output = bin()
@@ -59,7 +84,7 @@ fn sbom_formulation_mode_on_repo_with_app_lockfile_and_mise_lock() {
             "linux-x64",
             "--output",
             output_path.to_str().unwrap(),
-            repo_root().to_str().unwrap(),
+            project_dir.to_str().unwrap(),
         ])
         .output()
         .expect("run sbom command");
@@ -266,11 +291,7 @@ fn sbom_formulation_mode_on_repo_with_app_lockfile_and_mise_lock() {
 fn sbom_formulation_mode_on_mise_only_repo_has_empty_components_and_populated_formulation() {
     let _guard = lock_trivy();
     let tmp = TempDir::new().expect("create temp mise-only repo");
-    fs::copy(repo_root().join("mise.lock"), tmp.path().join("mise.lock")).unwrap();
-    copy_dir_all(
-        &repo_root().join(".mise/locks"),
-        &tmp.path().join(".mise/locks"),
-    );
+    copy_harness_mise_lock_as_root(tmp.path());
 
     let output_path = tmp.path().join("sbom.cdx.json");
     let output = bin()
@@ -369,6 +390,20 @@ fn sbom_formulation_mode_on_mise_only_repo_has_empty_components_and_populated_fo
 fn sbom_components_mode_emits_valid_cyclonedx_accepted_by_trivy_sbom() {
     let _guard = lock_trivy();
     let tmp = TempDir::new().expect("create temp dir");
+    let project_dir = tmp.path().join("project");
+    fs::create_dir_all(&project_dir).unwrap();
+    fs::copy(
+        repo_root().join("Cargo.toml"),
+        project_dir.join("Cargo.toml"),
+    )
+    .unwrap();
+    fs::copy(
+        repo_root().join("Cargo.lock"),
+        project_dir.join("Cargo.lock"),
+    )
+    .unwrap();
+    copy_harness_mise_lock_as_root(&project_dir);
+
     let output_path = tmp.path().join("sbom-tools.cdx.json");
 
     let output = bin()
@@ -378,7 +413,7 @@ fn sbom_components_mode_emits_valid_cyclonedx_accepted_by_trivy_sbom() {
             "components",
             "--output",
             output_path.to_str().unwrap(),
-            repo_root().to_str().unwrap(),
+            project_dir.to_str().unwrap(),
         ])
         .output()
         .expect("run sbom --mode components");

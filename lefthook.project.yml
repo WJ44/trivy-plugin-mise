@@ -1,0 +1,29 @@
+# Project-specific formatters and linters for WJ44/trivy-plugin-mise (Rust).
+
+format:
+  jobs:
+    - name: rustfmt
+      glob: "*.rs"
+      run: rustfmt --edition 2024 {files}
+
+format-check:
+  jobs:
+    - name: rustfmt
+      glob: "*.rs"
+      run: rustfmt --check --edition 2024 {files}
+
+lint:
+  jobs:
+    - name: clippy
+      glob: "*.rs"
+      run: |
+        # {files}
+        cargo clippy --fix --allow-dirty --allow-staged --all-targets -- -D warnings
+
+lint-check:
+  jobs:
+    - name: clippy
+      glob: "*.rs"
+      run: |
+        # {files}
+        cargo clippy --all-targets -- -D warnings

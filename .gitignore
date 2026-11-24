@@ -21,15 +21,11 @@ sbom.cdx.json
 /.claude/
 /.mcp.json
 /hooks/
-/shim/
-/.github/ISSUE_TEMPLATE/
-/.github/PULL_REQUEST_TEMPLATE/
+/.github/ISSUE_TEMPLATE/agent_proposal.md
+/.github/PULL_REQUEST_TEMPLATE/agent.md
 /.github/labels.json
 /bin/harness.py
 /bin/sync-labels
 /bin/wait-pr-checks
-/setup.sh
-/setup-system.sh
-/setup-user.sh
 /.harness.json
 # --- harness:release:end ---

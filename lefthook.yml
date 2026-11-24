@@ -9,12 +9,18 @@
 #
 # Every tool gets every file and picks out the ones it handles: Prettier skips unknown
 # files (--ignore-unknown), shfmt --find keeps shell files (by extension or shebang).
-# Tools that can't pick out their own files get a glob (tombi, ruff, trivyignore, rustfmt, clippy).
+# Tools that can't pick out their own files get a glob (tombi, trivyignore).
 #
 # Commands with pipes start with set -o pipefail, so failures aren't hidden.
 
-# Git hooks source this first, so the tools in mise.toml are on PATH.
+# Git hooks source this first, so layered mise tools (.config/mise/conf.d/harness.toml / mise.toml) are on PATH.
 rc: ./.lefthookrc
+
+# Downstream projects place custom formatters, linters, or named job overrides
+# in lefthook.project.yml (loaded automatically when present) rather than editing
+# lefthook.yml directly.
+extends:
+  - lefthook.project.yml
 
 pre-commit:
   piped: true
@@ -43,6 +49,38 @@ commit-msg:
     - name: commitlint
       run: commitlint --edit {1}
 
+post-checkout:
+  jobs:
+    - name: hydrate-worktree
+      run: |
+        set -eu
+        if [ "{3}" = "0" ]; then
+          exit 0
+        fi
+        grep -qxF "# --- harness:release:start ---" .gitignore 2>/dev/null || exit 0
+        git_dir=$(git rev-parse --git-dir 2>/dev/null) || exit 0
+        common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
+        if [ "$(cd "$git_dir" && pwd -P)" = "$(cd "$common_dir" && pwd -P)" ]; then
+          exit 0
+        fi
+        cur_root=$(pwd -P)
+        git worktree list --porcelain | while IFS= read -r line; do
+          case "$line" in
+          "worktree "*)
+            wt="${line#worktree }"
+            wt_real=$(cd "$wt" 2>/dev/null && pwd -P) || continue
+            if [ "$wt_real" != "$cur_root" ] && [ -f "$wt_real/bin/harness.py" ]; then
+              if python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+                python3 "$wt_real/bin/harness.py" hydrate-worktree --source-worktree "$wt_real" --root "$cur_root" --quiet
+              else
+                "$wt_real/bin/harness.py" hydrate-worktree --source-worktree "$wt_real" --root "$cur_root" --quiet
+              fi
+              break
+            fi
+            ;;
+          esac
+        done
+
 format:
   # Each file has one formatter, so the jobs never touch the same file.
   files: &repo_files |
@@ -63,12 +101,6 @@ format:
     - name: tombi
       glob: "*.toml"
       run: tombi format --quiet {files}
-    - name: ruff
-      glob: "*.py"
-      run: ruff format {files}
-    - name: rustfmt
-      glob: "*.rs"
-      run: rustfmt --edition 2024 {files}
 
 format-check:
   files: *repo_files
@@ -84,12 +116,6 @@ format-check:
       glob: "*.toml"
       # --check alone doesn't show what's wrong; --diff alone writes the fix.
       run: tombi format --check --diff {files}
-    - name: ruff
-      glob: "*.py"
-      run: ruff format --check {files}
-    - name: rustfmt
-      glob: "*.rs"
-      run: rustfmt --check --edition 2024 {files}
 
 lint:
   files: *repo_files
@@ -110,9 +136,6 @@ lint:
       run: |
         set -o pipefail
         shfmt --find=0 {files} | xargs -0 -r shellcheck
-    - name: ruff
-      glob: "*.py"
-      run: ruff check --fix {files}
     - group:
         parallel: false
         pipelined: false
@@ -134,11 +157,6 @@ lint:
       name: tombi
       glob: "*.toml"
       run: tombi lint --quiet {files}
-    - name: clippy
-      glob: "*.rs"
-      run: |
-        # {files}
-        cargo clippy --fix --allow-dirty --allow-staged --all-targets -- -D warnings
 
 lint-check:
   files: *repo_files
@@ -149,17 +167,14 @@ lint-check:
       run: |
         set -o pipefail
         shfmt --find=0 {files} | xargs -0 -r shellcheck
-    - name: ruff
-      glob: "*.py"
-      run: ruff check {files}
     - name: rumdl
       glob: "*.md"
       run: rumdl check {files}
     - *decisions_job
     - *trivyignore_job
     - *tombi_lint_job
-    - name: clippy
-      glob: "*.rs"
-      run: |
-        # {files}
-        cargo clippy --all-targets -- -D warnings
+    # Intentionally check-only (omitted from `lint`) so hooks/post-edit does not
+    # fail mid-edit on mise config before `mise lock` is run.
+    - name: mise-lock
+      glob: "{mise.toml,.mise.toml,mise.lock,.config/mise/conf.d/*.toml,.config/mise/mise.lock,./mise.toml,./.mise.toml,./mise.lock,./.config/mise/conf.d/*.toml,./.config/mise/mise.lock}"
+      run: mise lock --check
