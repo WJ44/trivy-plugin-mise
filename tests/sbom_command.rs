@@ -457,3 +457,105 @@ fn sbom_components_mode_emits_valid_cyclonedx_accepted_by_trivy_sbom() {
         String::from_utf8_lossy(&trivy_out.stderr)
     );
 }
+
+#[test]
+fn sbom_succeeds_on_v4_lockfile_with_provenance_and_sidecars() {
+    let _guard = lock_trivy();
+    let tmp = TempDir::new().expect("create temp dir");
+    let project_dir = tmp.path().join("project");
+    fs::create_dir_all(&project_dir).unwrap();
+
+    // Start from the repo's harness lockfile & sidecars, upgrade header to lockfile_version = 4,
+    // and add a v4 npm tool entry with `provenance = { repository = "..." }`.
+    copy_harness_mise_lock_as_root(&project_dir);
+    let raw = fs::read_to_string(project_dir.join("mise.lock")).unwrap();
+    let v4_lock = format!(
+        "{}\n[[tools.\"npm:@sigstore/bundle\"]]\nversion = \"3.1.0\"\nbackend = \"npm:@sigstore/bundle\"\nspecifiers = [\"3.1.0\"]\nprovenance = {{ repository = \"github.com/sigstore/sigstore-js\" }}\n",
+        raw.replacen("lockfile_version = 3", "lockfile_version = 4", 1)
+    );
+    fs::write(project_dir.join("mise.lock"), v4_lock).unwrap();
+
+    // Formulation mode
+    let formulation_out = tmp.path().join("sbom-v4-formulation.cdx.json");
+    let output = bin()
+        .args([
+            "sbom",
+            "--platform",
+            "linux-x64",
+            "--output",
+            formulation_out.to_str().unwrap(),
+            project_dir.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sbom on v4 lockfile");
+    assert!(
+        output.status.success(),
+        "sbom formulation mode failed on v4 lockfile: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let bom: Value = serde_json::from_str(&fs::read_to_string(&formulation_out).unwrap()).unwrap();
+    let formula_components = bom["formulation"][0]["components"]
+        .as_array()
+        .expect("formulation[0].components should be populated");
+    let bundle = formula_components
+        .iter()
+        .find(|c| c.get("purl").and_then(Value::as_str) == Some("pkg:npm/%40sigstore/bundle@3.1.0"))
+        .expect("v4 npm:@sigstore/bundle component should be present");
+    assert!(
+        bundle["properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "mise:provenance:repository"
+                && p["value"] == "github.com/sigstore/sigstore-js"),
+        "expected mise:provenance:repository property on @sigstore/bundle"
+    );
+
+    let trivy_formulation = Command::new("trivy")
+        .args(["sbom", "--quiet", formulation_out.to_str().unwrap()])
+        .output()
+        .expect("run trivy sbom on v4 formulation output");
+    assert!(
+        trivy_formulation.status.success(),
+        "trivy sbom failed on v4 formulation output: {}",
+        String::from_utf8_lossy(&trivy_formulation.stderr)
+    );
+
+    // Components mode
+    let components_out = tmp.path().join("sbom-v4-components.cdx.json");
+    let comp_output = bin()
+        .args([
+            "sbom",
+            "--mode",
+            "components",
+            "--platform",
+            "linux-x64",
+            "--output",
+            components_out.to_str().unwrap(),
+            project_dir.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sbom --mode components on v4 lockfile");
+    assert!(
+        comp_output.status.success(),
+        "sbom components mode failed on v4 lockfile: {}",
+        String::from_utf8_lossy(&comp_output.stderr)
+    );
+
+    let comp_bom: Value =
+        serde_json::from_str(&fs::read_to_string(&components_out).unwrap()).unwrap();
+    let comp_purls = collect_purls(comp_bom["components"].as_array().unwrap());
+    assert!(comp_purls.contains("pkg:npm/%40sigstore/bundle@3.1.0"));
+    assert!(comp_purls.contains("pkg:npm/prettier@3.10.1"));
+
+    let trivy_components = Command::new("trivy")
+        .args(["sbom", "--quiet", components_out.to_str().unwrap()])
+        .output()
+        .expect("run trivy sbom on v4 components output");
+    assert!(
+        trivy_components.status.success(),
+        "trivy sbom failed on v4 components output: {}",
+        String::from_utf8_lossy(&trivy_components.stderr)
+    );
+}

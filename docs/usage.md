@@ -226,12 +226,12 @@ trivy mise version
 
 ## `mise.lock` & Sidecar Lockfiles (`.mise/locks/`)
 
-### `mise.lock` Parsing (`lockfile_version = 3`)
+### `mise.lock` Parsing (`lockfile_version = 3` and `4`)
 
-`trivy-plugin-mise` parses `<PATH>/mise.lock` when present. It requires
-`lockfile_version = 3` (returning an error on unsupported lockfile versions) and
-supports both single-table (`[tools.<name>]`) and array-of-tables
-(`[[tools.<name>]]`) tool definitions.
+`trivy-plugin-mise` parses `<PATH>/mise.lock` when present. It supports
+`lockfile_version = 3` and `lockfile_version = 4` (returning an error on
+unsupported lockfile versions) and supports both single-table (`[tools.<name>]`)
+and array-of-tables (`[[tools.<name>]]`) tool definitions.
 
 Each locked tool entry is normalized into a CycloneDX `application` component
 using its effective backend (`tool.backend` when present, or the
@@ -264,6 +264,9 @@ Each normalized `mise.lock` component sets `bom-ref` to its PURL and records
   - `mise:tool`: Tool name key in `mise.lock`.
   - `mise:backend`: Effective backend specifier (e.g. `aqua:aquasecurity/trivy`
     or `npm:@commitlint/cli`).
+  - `mise:provenance:repository`: Emitted when a `lockfile_version = 4` tool
+    entry records a package provenance repository pin (for example
+    `provenance = { repository = "github.com/sigstore/sigstore-js" }`).
   - `mise:<sidecar>:path` and `mise:<sidecar>:digest`: Emitted when a tool entry
     references a sidecar lockfile table (for example
     `aube = { path = ".mise/locks/...", digest = "sha256:..." }`).

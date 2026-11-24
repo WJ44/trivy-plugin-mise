@@ -540,3 +540,61 @@ fn scan_repo_only_and_toolchain_only_fail_with_conflict() {
         "expected clap conflict message mentioning both flags, got:\n{stderr}"
     );
 }
+
+#[test]
+fn scan_succeeds_on_v4_lockfile_with_provenance_and_sidecars() {
+    let _guard = lock_trivy();
+    let tmp = TempDir::new().unwrap();
+    let sidecar_dir = tmp.path().join(".mise/locks/npm-clean/1.0.0");
+    fs::create_dir_all(&sidecar_dir).unwrap();
+    fs::write(tmp.path().join("package-lock.json"), CLEAN_PACKAGE_LOCK).unwrap();
+    fs::write(sidecar_dir.join("package-lock.json"), CLEAN_PACKAGE_LOCK).unwrap();
+    fs::write(tmp.path().join(".trivyignore.yaml"), EMPTY_TRIVYIGNORE).unwrap();
+
+    let v4_lock = r#"lockfile_version = 4
+
+[[tools."npm:@sigstore/bundle"]]
+version = "3.1.0"
+backend = "npm:@sigstore/bundle"
+specifiers = ["3.1.0"]
+provenance = { repository = "github.com/sigstore/sigstore-js" }
+
+[[tools."npm:clean"]]
+version = "1.0.0"
+aube = { path = ".mise/locks/npm-clean/1.0.0" }
+backend = "npm:clean"
+specifiers = ["1.0.0"]
+provenance = { repository = "github.com/example/clean" }
+"#;
+    fs::write(tmp.path().join("mise.lock"), v4_lock).unwrap();
+
+    let clean_output = bin()
+        .arg("scan")
+        .arg(tmp.path())
+        .output()
+        .expect("failed to run scan on v4 lockfile");
+    assert!(
+        clean_output.status.success(),
+        "expected scan on clean v4 lockfile to exit 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        clean_output.status.code(),
+        String::from_utf8_lossy(&clean_output.stdout),
+        String::from_utf8_lossy(&clean_output.stderr)
+    );
+    let clean_stderr = String::from_utf8_lossy(&clean_output.stderr);
+    assert!(clean_stderr.contains(
+        "==> Scan summary: repo=clean, toolchain=clean, gobinary=skipped -> clean (exit code 0)"
+    ));
+
+    // Confirm sidecar vulnerabilities are still detected when mise.lock is v4.
+    fs::write(sidecar_dir.join("package-lock.json"), VULN_PACKAGE_LOCK).unwrap();
+    let vuln_output = bin()
+        .arg("scan")
+        .arg(tmp.path())
+        .output()
+        .expect("failed to run scan on vulnerable v4 sidecar");
+    assert_eq!(vuln_output.status.code(), Some(1));
+    let vuln_stderr = String::from_utf8_lossy(&vuln_output.stderr);
+    assert!(vuln_stderr.contains(
+        "==> Scan summary: repo=clean, toolchain=findings, gobinary=skipped -> findings detected (exit code 1)"
+    ));
+}
