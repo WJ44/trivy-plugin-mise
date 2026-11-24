@@ -17,7 +17,7 @@ generation and vulnerability scanning.
     the `mise` toolchain and transitive sidecar dependencies in top-level
     `components[]`.
 - **`mise.lock` & `.mise/locks/` Sidecar Extraction:** Normalizes `mise.lock`
-  (`lockfile_version = 3`) backends (`npm`, `pipx`/`python`, `cargo`,
+  (`lockfile_version = 3` and `4`) backends (`npm`, `pipx`/`python`, `cargo`,
   `aqua`/`github`/`ubi`, `go`, and generic tools) into standard Package URLs
   (PURLs) with platform checksums, download URLs, and provenance properties.
   Verifies SHA-256 digests and materializes `.mise/locks/<tool>/<version>/`

@@ -96,6 +96,13 @@ pub fn normalize_tool(
         });
     }
 
+    if let Some(pkg_provenance) = &tool.provenance {
+        properties.push(CycloneDxProperty {
+            name: "mise:provenance:repository".to_string(),
+            value: pkg_provenance.repository.clone(),
+        });
+    }
+
     for (sidecar_name, sidecar) in &tool.sidecars {
         properties.push(CycloneDxProperty {
             name: format!("mise:{sidecar_name}:path"),

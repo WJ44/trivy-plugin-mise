@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 
 use trivy_plugin_mise::component::{CycloneDxComponent, CycloneDxHash, normalize_lock};
-use trivy_plugin_mise::mise_lock::{MiseLock, SUPPORTED_LOCKFILE_VERSION};
+use trivy_plugin_mise::mise_lock::{MiseLock, PackageProvenance, SUPPORTED_LOCKFILE_VERSIONS};
 use trivy_plugin_mise::purl::tool_to_purl;
 
 const FIXTURE_LOCK: &str = include_str!("fixtures/mise.lock");
+const FIXTURE_V4_LOCK: &str = include_str!("fixtures/mise.v4.lock");
 const REPO_LOCK: &str = include_str!("../mise.lock");
 const HARNESS_LOCK: &str = include_str!("../.config/mise/mise.lock");
 
@@ -19,7 +20,8 @@ fn prop<'a>(component: &'a CycloneDxComponent, key: &str) -> Option<&'a str> {
 #[test]
 fn parses_fixture_and_verifies_all_tools_and_purls() {
     let lock = MiseLock::from_str(FIXTURE_LOCK).expect("fixture mise.lock should parse");
-    assert_eq!(lock.lockfile_version, SUPPORTED_LOCKFILE_VERSION);
+    assert_eq!(lock.lockfile_version, 3);
+    assert!(SUPPORTED_LOCKFILE_VERSIONS.contains(&lock.lockfile_version));
 
     let expected_purls: BTreeMap<&str, &str> = BTreeMap::from([
         ("cargo:ripgrep", "pkg:cargo/ripgrep@14.1.1"),
@@ -162,4 +164,85 @@ fn parses_and_normalizes_repository_mise_lock() {
         .find(|c| c.name == "trivy")
         .expect("trivy in .config/mise/mise.lock");
     assert_eq!(prop(trivy, "mise:provenance"), Some("cosign"));
+}
+
+#[test]
+fn parses_v4_fixture_and_normalizes_components() {
+    let lock = MiseLock::from_str(FIXTURE_V4_LOCK).expect("v4 fixture mise.lock should parse");
+    assert_eq!(lock.lockfile_version, 4);
+    assert!(SUPPORTED_LOCKFILE_VERSIONS.contains(&lock.lockfile_version));
+
+    let bundle = &lock.tools["npm:@sigstore/bundle"][0];
+    assert_eq!(
+        bundle.provenance,
+        Some(PackageProvenance {
+            repository: "github.com/sigstore/sigstore-js".to_string(),
+        })
+    );
+    assert!(
+        bundle.sidecars.is_empty(),
+        "tool-level provenance must not be misclassified as a sidecar"
+    );
+
+    let prettier = &lock.tools["npm:prettier"][0];
+    assert_eq!(
+        prettier.provenance,
+        Some(PackageProvenance {
+            repository: "github.com/prettier/prettier".to_string(),
+        })
+    );
+    assert_eq!(
+        prettier.sidecars["aube"].path,
+        ".mise/locks/npm-prettier/3.10.1"
+    );
+    assert!(!prettier.sidecars.contains_key("provenance"));
+
+    let lefthook = &lock.tools["lefthook"][0];
+    assert_eq!(
+        lefthook.extra["unsupported_platforms"].as_array().unwrap()[0].as_str(),
+        Some("windows-arm64")
+    );
+
+    let hk = &lock.tools["hk"][0];
+    assert_eq!(
+        hk.platforms["linux-x64"].checksum.as_deref(),
+        Some("sha256:449b83c35ac3a460f80a4c9a41ad99430add8cf6caa6ceadc27e810feac3647d")
+    );
+
+    let slsatool = &lock.tools["slsatool"][0];
+    assert_eq!(
+        slsatool.platforms["linux-x64"].provenance.as_deref(),
+        Some("slsa")
+    );
+
+    let components = normalize_lock(&lock, Some("linux-x64")).expect("normalize v4 should succeed");
+    assert_eq!(components.len(), 6);
+
+    let bundle_comp = components
+        .iter()
+        .find(|c| c.purl == "pkg:npm/%40sigstore/bundle@3.1.0")
+        .expect("@sigstore/bundle component");
+    assert_eq!(
+        prop(bundle_comp, "mise:provenance:repository"),
+        Some("github.com/sigstore/sigstore-js")
+    );
+
+    let prettier_comp = components
+        .iter()
+        .find(|c| c.purl == "pkg:npm/prettier@3.10.1")
+        .expect("prettier component");
+    assert_eq!(
+        prop(prettier_comp, "mise:provenance:repository"),
+        Some("github.com/prettier/prettier")
+    );
+    assert_eq!(
+        prop(prettier_comp, "mise:aube:path"),
+        Some(".mise/locks/npm-prettier/3.10.1")
+    );
+
+    let slsa_comp = components
+        .iter()
+        .find(|c| c.name == "slsatool")
+        .expect("slsatool component");
+    assert_eq!(prop(slsa_comp, "mise:provenance"), Some("slsa"));
 }
