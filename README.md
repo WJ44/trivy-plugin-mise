@@ -10,26 +10,41 @@ generation and vulnerability scanning.
 - **CycloneDX 1.7 SBOM Generation (`sbom`):**
   - **`--mode formulation` (default):** Runs `trivy fs` on the repository root
     for shipped product dependencies (`components[]`) and injects `mise`-managed
-    development and build tools (`mise.lock` and `.mise/locks/`) into CycloneDX
-    1.7 `formulation[]` (Manufacturing BOM / MBOM) with workflow metadata and a
-    preserved dependency graph.
+    development and build tools (across standard layered configs/lockfiles and
+    sidecar `locks/` directories) into CycloneDX 1.7 `formulation[]`
+    (Manufacturing BOM / MBOM) with workflow metadata and a preserved dependency
+    graph.
   - **`--mode components`:** Emits a standalone CycloneDX 1.7 SBOM listing only
     the `mise` toolchain and transitive sidecar dependencies in top-level
     `components[]`.
-- **`mise.lock` & `.mise/locks/` Sidecar Extraction:** Normalizes `mise.lock`
+- **Layered `mise` Discovery & Stale-Entry Filtering:** Pure-filesystem
+  discovery of standard repository-scoped `mise` configuration files
+  (`.config/mise/conf.d/*.toml`, `.config/mise/config.toml`,
+  `.config/mise/mise.toml`, `.config/mise.toml`, `.mise/conf.d/*.toml`,
+  `.mise/config.toml`, `mise/conf.d/*.toml`, `mise/config.toml`, `mise.toml`,
+  `.mise.toml`), their lockfiles (`.config/mise/mise.lock`, `.config/mise.lock`,
+  `.mise/mise.lock`, `mise/mise.lock`, `mise.lock`), and sidecar directories
+  (`.config/mise/locks/`, `.mise/locks/`, `mise/locks/`). Machine-local
+  `*.local.toml` / `*.local.lock` overrides are excluded by default and opt-in
+  via `--include-local`; non-standard paths can be configured via repeatable
+  `--mise-config <PATH>` and `--mise-lock <PATH>` flags. When active `mise`
+  config files exist, unconfigured/stale lockfile entries (and their sidecars)
+  are warned on `stderr` and omitted, while lockfile-only targets continue to
+  work cleanly.
+- **`mise.lock` & Sidecar Lockfile Extraction:** Normalizes `mise.lock`
   (`lockfile_version = 3` and `4`) backends (`npm`, `pipx`/`python`, `cargo`,
   `aqua`/`github`/`ubi`, `go`, and generic tools) into standard Package URLs
   (PURLs) with platform checksums, download URLs, and provenance properties.
-  Verifies SHA-256 digests and materializes `.mise/locks/<tool>/<version>/`
-  sidecar lockfiles (`aube-lock.yaml` mapped to `pnpm-lock.yaml`, `uv.lock`,
-  `Cargo.lock`, etc.) in an ephemeral workspace for Trivy inspection without
-  mutating the repository.
+  Verifies SHA-256 digests and materializes sidecar lockfiles (`aube-lock.yaml`
+  mapped to `pnpm-lock.yaml`, `uv.lock`, `Cargo.lock`, etc.) in an ephemeral
+  workspace for Trivy inspection without mutating the repository.
 - **Multi-Tier Vulnerability & License Scanning (`scan`):**
   1. **Repository tier (`repo`):** Scans repository dependencies for
      vulnerabilities and license compliance (`--scanners vuln,license`),
-     skipping `.mise/locks/`.
-  2. **Toolchain sidecar tier (`toolchain`):** Verifies and materializes
-     `.mise/locks/` sidecar lockfiles and scans transitive tool dependencies for
+     skipping all discovered sidecar lock directories (`.config/mise/locks/`,
+     `.mise/locks/`, `mise/locks/`, etc.).
+  2. **Toolchain sidecar tier (`toolchain`):** Verifies and materializes active
+     sidecar lockfiles and scans transitive tool dependencies for
      vulnerabilities (`--scanners vuln`), avoiding copyleft license
      false-positives on unshipped developer tools.
   3. **Active binary tier (`gobinary`, opt-in via `--include-gobinary`):**
@@ -112,6 +127,10 @@ trivy mise --scanners vuln -- --skip-db-update --offline-scan
 trivy mise scan --include-gobinary
 trivy-plugin-mise scan --repo-only
 trivy-plugin-mise scan --toolchain-only --severity HIGH,CRITICAL
+
+# Include machine-local overrides (`*.local.toml` / `*.local.lock`) or pass custom paths
+trivy-plugin-mise scan --include-local
+trivy-plugin-mise scan --mise-config custom/mise.toml --mise-lock custom/mise.lock
 ```
 
 - **Ignore file auto-discovery:** When `--ignorefile` is omitted, `scan` checks
@@ -142,8 +161,9 @@ platform triple:
 
 ```bash
 trivy mise sbom --mode components --platform linux-x64 --output sbom-tools.cdx.json
-# Or:
-trivy-plugin-mise sbom --mode components --platform linux-x64 --output sbom-tools.cdx.json
+# Include machine-local overrides or specify custom config/lockfile paths:
+trivy-plugin-mise sbom --include-local --output sbom.cdx.json
+trivy-plugin-mise sbom --mise-config custom/mise.toml --mise-lock custom/mise.lock --output sbom.cdx.json
 ```
 
 See [`docs/usage.md`](docs/usage.md) for complete documentation.

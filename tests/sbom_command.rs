@@ -559,3 +559,280 @@ fn sbom_succeeds_on_v4_lockfile_with_provenance_and_sidecars() {
         String::from_utf8_lossy(&trivy_components.stderr)
     );
 }
+
+#[test]
+fn sbom_discovers_this_repository_layered_config_mise_and_root_layout() {
+    let _guard = lock_trivy();
+    let tmp = TempDir::new().expect("create temp dir");
+    let output_path = tmp.path().join("repo-sbom.cdx.json");
+
+    let output = bin()
+        .args([
+            "sbom",
+            "--platform",
+            "linux-x64",
+            "--output",
+            output_path.to_str().unwrap(),
+            repo_root().to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sbom on repository root");
+
+    assert!(
+        output.status.success(),
+        "sbom on repository root failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("warning: omitting unconfigured tool"),
+        "expected zero unconfigured tool warnings on repository itself:\n{stderr}"
+    );
+
+    let bom: Value = serde_json::from_str(&fs::read_to_string(&output_path).unwrap()).unwrap();
+    let top_purls = collect_purls(bom["components"].as_array().unwrap());
+    assert!(
+        top_purls.iter().any(|p| p.starts_with("pkg:cargo/clap@")),
+        "expected Cargo dependencies in top-level components[]"
+    );
+    assert!(
+        !top_purls.iter().any(|p| p.starts_with("pkg:npm/prettier@")),
+        ".config/mise/locks/ must not leak into top-level components[]"
+    );
+
+    let formula_components = bom["formulation"][0]["components"]
+        .as_array()
+        .expect("formulation[0].components should be populated");
+    let formula_purls = collect_purls(formula_components);
+
+    // Tool from root `mise.toml` + `mise.lock`.
+    assert!(
+        formula_purls.contains("pkg:generic/rust@1.100.0"),
+        "expected rust from root mise.lock in formulation[]"
+    );
+    // Tools from `.config/mise/conf.d/harness.toml` + `.config/mise/mise.lock`.
+    assert!(
+        formula_purls
+            .iter()
+            .any(|p| p.starts_with("pkg:github/evilmartians/lefthook@2.2.2")),
+        "expected lefthook from .config/mise/mise.lock in formulation[]"
+    );
+    assert!(
+        formula_purls.contains("pkg:npm/prettier@3.10.1"),
+        "expected prettier from .config/mise/mise.lock in formulation[]"
+    );
+    assert!(
+        formula_purls.contains("pkg:npm/%40commitlint/cli@21.2.4"),
+        "expected @commitlint/cli from .config/mise/mise.lock in formulation[]"
+    );
+    // Transitive sidecar dependencies from `.config/mise/locks/`.
+    assert!(
+        formula_components.len() > 20,
+        "expected transitive .config/mise/locks/ dependencies in formulation[], got {}",
+        formula_components.len()
+    );
+
+    let trivy_out = Command::new("trivy")
+        .args(["sbom", "--quiet", output_path.to_str().unwrap()])
+        .output()
+        .expect("run trivy sbom on layered repository output");
+    assert!(
+        trivy_out.status.success(),
+        "trivy sbom failed on layered repository output: {}",
+        String::from_utf8_lossy(&trivy_out.stderr)
+    );
+}
+
+#[test]
+fn sbom_filters_stale_lockfile_tools_and_excludes_their_sidecars_with_stderr_warnings() {
+    let _guard = lock_trivy();
+    let tmp = TempDir::new().expect("create temp dir");
+    let project_dir = tmp.path().join("project");
+    fs::create_dir_all(&project_dir).unwrap();
+
+    // Copy harness lockfile + sidecars (contains prettier, commitlint, lefthook, etc.)
+    copy_harness_mise_lock_as_root(&project_dir);
+    // Declare ONLY `npm:prettier` and `lefthook` in `mise.toml` so `npm:@commitlint/cli` and others are stale.
+    fs::write(
+        project_dir.join("mise.toml"),
+        "[tools]\n\"npm:prettier\" = \"3.10.1\"\nlefthook = \"2.2.2\"\n",
+    )
+    .unwrap();
+
+    let output_path = tmp.path().join("filtered.cdx.json");
+    let output = bin()
+        .args([
+            "sbom",
+            "--mode",
+            "components",
+            "--output",
+            output_path.to_str().unwrap(),
+            project_dir.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sbom with stale lock entries");
+
+    assert!(
+        output.status.success(),
+        "sbom failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr
+            .contains("warning: omitting unconfigured tool `npm:@commitlint/cli` from `mise.lock`"),
+        "expected stderr warning for omitted npm:@commitlint/cli:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("warning: omitting unconfigured tool `shfmt` from `mise.lock`"),
+        "expected stderr warning for omitted shfmt:\n{stderr}"
+    );
+
+    let bom: Value = serde_json::from_str(&fs::read_to_string(&output_path).unwrap()).unwrap();
+    let purls = collect_purls(bom["components"].as_array().unwrap());
+
+    assert!(purls.contains("pkg:npm/prettier@3.10.1"));
+    assert!(
+        purls
+            .iter()
+            .any(|p| p.starts_with("pkg:github/evilmartians/lefthook@2.2.2"))
+    );
+    assert!(
+        !purls.contains("pkg:npm/%40commitlint/cli@21.2.4"),
+        "stale @commitlint/cli must be omitted from SBOM"
+    );
+    assert!(
+        !purls
+            .iter()
+            .any(|p| p.starts_with("pkg:npm/%40commitlint/")),
+        "transitive sidecar dependencies of stale @commitlint/cli must be omitted from SBOM"
+    );
+    assert!(
+        !purls.iter().any(|p| p.starts_with("pkg:github/mvdan/sh@")),
+        "stale shfmt must be omitted from SBOM"
+    );
+}
+
+#[test]
+fn sbom_include_local_and_repeatable_custom_mise_config_and_lock_flags() {
+    let _guard = lock_trivy();
+    let tmp = TempDir::new().expect("create temp dir");
+    let project_dir = tmp.path().join("project");
+    fs::create_dir_all(project_dir.join(".config/mise")).unwrap();
+    fs::create_dir_all(project_dir.join("custom")).unwrap();
+
+    // Standard layered configs + local override.
+    fs::write(
+        project_dir.join(".config/mise/config.toml"),
+        "[tools]\nshfmt = \"3.14.1\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project_dir.join(".config/mise/mise.lock"),
+        "lockfile_version = 3\n\n[[tools.shfmt]]\nversion = \"3.14.1\"\nbackend = \"aqua:mvdan/sh\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project_dir.join("mise.local.toml"),
+        "[tools]\nripgrep = \"16.0.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project_dir.join("mise.local.lock"),
+        "lockfile_version = 3\n\n[[tools.ripgrep]]\nversion = \"16.0.0\"\nbackend = \"aqua:BurntSushi/ripgrep\"\n",
+    )
+    .unwrap();
+
+    // Default (without --include-local): includes shfmt, excludes ripgrep.
+    let default_out = bin()
+        .args(["sbom", "--mode", "components"])
+        .arg(&project_dir)
+        .output()
+        .expect("run sbom without --include-local");
+    assert!(default_out.status.success());
+    let default_bom: Value = serde_json::from_slice(&default_out.stdout).unwrap();
+    let default_purls = collect_purls(default_bom["components"].as_array().unwrap());
+    assert!(default_purls.contains("pkg:github/mvdan/sh@3.14.1"));
+    assert!(!default_purls.contains("pkg:github/burntsushi/ripgrep@16.0.0"));
+
+    // With --include-local: includes both shfmt and local ripgrep.
+    let local_out = bin()
+        .args(["sbom", "--mode", "components", "--include-local"])
+        .arg(&project_dir)
+        .output()
+        .expect("run sbom with --include-local");
+    assert!(local_out.status.success());
+    let local_bom: Value = serde_json::from_slice(&local_out.stdout).unwrap();
+    let local_purls = collect_purls(local_bom["components"].as_array().unwrap());
+    assert!(local_purls.contains("pkg:github/mvdan/sh@3.14.1"));
+    assert!(local_purls.contains("pkg:github/burntsushi/ripgrep@16.0.0"));
+
+    // Repeatable --mise-config and --mise-lock override standard discovery.
+    fs::write(
+        project_dir.join("custom/base.toml"),
+        "[tools]\ntombi = \"1.11.3\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project_dir.join("custom/extra.toml"),
+        "[tools]\nyq = \"4.54.3\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project_dir.join("custom/base.lock"),
+        "lockfile_version = 3\n\n[[tools.tombi]]\nversion = \"1.11.3\"\nbackend = \"aqua:tombi-toml/tombi\"\n\n[[tools.stale]]\nversion = \"1.0.0\"\nbackend = \"core:stale\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project_dir.join("custom/extra.lock"),
+        "lockfile_version = 3\n\n[[tools.yq]]\nversion = \"4.54.3\"\nbackend = \"aqua:mikefarah/yq\"\n",
+    )
+    .unwrap();
+
+    let custom_out = bin()
+        .args([
+            "sbom",
+            "--mode",
+            "components",
+            "--mise-config",
+            "custom/base.toml",
+            "--mise-config",
+            "custom/extra.toml",
+            "--mise-lock",
+            "custom/base.lock",
+            "--mise-lock",
+            "custom/extra.lock",
+        ])
+        .arg(&project_dir)
+        .output()
+        .expect("run sbom with custom repeatable flags");
+    assert!(
+        custom_out.status.success(),
+        "custom sbom failed: {}",
+        String::from_utf8_lossy(&custom_out.stderr)
+    );
+    let custom_stderr = String::from_utf8_lossy(&custom_out.stderr);
+    assert!(
+        custom_stderr
+            .contains("warning: omitting unconfigured tool `stale` from `custom/base.lock`"),
+        "expected stale warning from custom/base.lock:\n{custom_stderr}"
+    );
+    let custom_bom: Value = serde_json::from_slice(&custom_out.stdout).unwrap();
+    let custom_purls = collect_purls(custom_bom["components"].as_array().unwrap());
+    assert!(custom_purls.contains("pkg:github/tombi-toml/tombi@1.11.3"));
+    assert!(custom_purls.contains("pkg:github/mikefarah/yq@4.54.3"));
+    assert!(!custom_purls.contains("pkg:github/mvdan/sh@3.14.1"));
+    assert!(!custom_purls.contains("pkg:generic/stale@1.0.0"));
+
+    // Missing explicit --mise-config fails with a clear error.
+    let missing_out = bin()
+        .args(["sbom", "--mise-config", "does-not-exist.toml"])
+        .arg(&project_dir)
+        .output()
+        .expect("run sbom with missing explicit config");
+    assert!(!missing_out.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_out.stderr).contains("does-not-exist.toml"),
+        "expected missing path in stderr"
+    );
+}

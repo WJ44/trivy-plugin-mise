@@ -18,6 +18,9 @@ fn main() -> ExitCode {
             output,
             platform,
             no_verify_digests,
+            include_local,
+            mise_config,
+            mise_lock,
             path,
             trivy_args,
         } => {
@@ -25,6 +28,9 @@ fn main() -> ExitCode {
                 mode,
                 target_platform: platform,
                 verify_digests: !no_verify_digests,
+                include_local,
+                mise_configs: mise_config,
+                mise_locks: mise_lock,
                 trivy_args,
             };
             match generate_sbom(&path, &options).and_then(|bom| write_sbom(&bom, output.as_deref()))

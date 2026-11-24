@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::ValueEnum;
@@ -9,11 +9,15 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::component::{CycloneDxComponent, normalize_lock};
-use crate::mise_lock::{MiseLock, MiseLockError};
+use crate::component::{CycloneDxComponent, normalize_tools};
+use crate::mise_config::{
+    DiscoveryOptions, MiseConfigError, emit_omitted_tool_warnings, resolve_mise_project,
+};
+use crate::mise_lock::MiseLockError;
 use crate::purl::PurlError;
 use crate::sidecar::{
-    SidecarError, SidecarOptions, extract_sidecar_json_with_args, run_trivy_fs_cyclonedx_with_args,
+    SidecarError, SidecarOptions, extract_project_sidecar_json_with_args,
+    run_trivy_fs_cyclonedx_with_args,
 };
 
 const CYCLONEDX_1_7_SCHEMA: &str = "http://cyclonedx.org/schema/bom-1.7.schema.json";
@@ -40,6 +44,9 @@ pub struct SbomOptions {
     pub mode: SbomMode,
     pub target_platform: Option<String>,
     pub verify_digests: bool,
+    pub include_local: bool,
+    pub mise_configs: Vec<PathBuf>,
+    pub mise_locks: Vec<PathBuf>,
     pub trivy_args: Vec<String>,
 }
 
@@ -49,6 +56,9 @@ impl Default for SbomOptions {
             mode: SbomMode::Formulation,
             target_platform: None,
             verify_digests: true,
+            include_local: false,
+            mise_configs: Vec::new(),
+            mise_locks: Vec::new(),
             trivy_args: Vec::new(),
         }
     }
@@ -57,6 +67,9 @@ impl Default for SbomOptions {
 /// Errors returned while generating or writing a CycloneDX SBOM.
 #[derive(Debug, Error)]
 pub enum SbomError {
+    #[error(transparent)]
+    MiseConfig(#[from] MiseConfigError),
+
     #[error(transparent)]
     MiseLock(#[from] MiseLockError),
 
@@ -82,21 +95,22 @@ pub enum SbomError {
 
 /// Generates a CycloneDX 1.7 SBOM for `project_root` according to `options`.
 pub fn generate_sbom(project_root: &Path, options: &SbomOptions) -> Result<Value, SbomError> {
-    let lock_path = project_root.join("mise.lock");
-    let lock = if lock_path.is_file() {
-        Some(MiseLock::from_path(&lock_path)?)
-    } else {
-        None
+    let discovery = DiscoveryOptions {
+        include_local: options.include_local,
+        config_paths: options.mise_configs.clone(),
+        lock_paths: options.mise_locks.clone(),
     };
+    let project = resolve_mise_project(project_root, &discovery)?;
+    emit_omitted_tool_warnings(project_root, &project.omitted_tools);
 
-    let mise_components = match &lock {
-        Some(parsed) => normalize_lock(parsed, options.target_platform.as_deref())?,
-        None => Vec::new(),
-    };
+    let mise_components = normalize_tools(
+        project.tools.iter().map(|entry| &entry.tool),
+        options.target_platform.as_deref(),
+    )?;
 
-    let sidecar_json = extract_sidecar_json_with_args(
+    let sidecar_json = extract_project_sidecar_json_with_args(
         project_root,
-        lock.as_ref(),
+        &project,
         &SidecarOptions {
             verify_digests: options.verify_digests,
         },
@@ -104,9 +118,12 @@ pub fn generate_sbom(project_root: &Path, options: &SbomOptions) -> Result<Value
     )?;
 
     let merged = merge_toolchain_bom(&mise_components, &sidecar_json)?;
+    let skip_dirs: Vec<&str> = project.skip_dirs.iter().map(String::as_str).collect();
 
     match options.mode {
-        SbomMode::Formulation => build_formulation_bom(project_root, merged, &options.trivy_args),
+        SbomMode::Formulation => {
+            build_formulation_bom(project_root, merged, &skip_dirs, &options.trivy_args)
+        }
         SbomMode::Components => build_components_bom(project_root, merged),
     }
 }
@@ -283,9 +300,10 @@ fn merge_toolchain_bom(
 fn build_formulation_bom(
     project_root: &Path,
     merged: MergedToolchain,
+    skip_dirs: &[&str],
     trivy_args: &[String],
 ) -> Result<Value, SbomError> {
-    let mut base = run_trivy_fs_cyclonedx_with_args(project_root, &[".mise/locks"], trivy_args)?;
+    let mut base = run_trivy_fs_cyclonedx_with_args(project_root, skip_dirs, trivy_args)?;
     apply_formulation_toolchain(&mut base, merged)?;
     Ok(base)
 }

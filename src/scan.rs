@@ -8,8 +8,14 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::cli::ScanArgs;
-use crate::mise_lock::{MiseLock, MiseLockError};
-use crate::sidecar::{SidecarError, SidecarOptions, materialize_sidecars};
+use crate::mise_config::{
+    DiscoveryOptions, MiseConfigError, discover_standard_skip_dirs, emit_omitted_tool_warnings,
+    resolve_mise_project,
+};
+use crate::mise_lock::MiseLockError;
+use crate::sidecar::{
+    MaterializedEntry, SidecarError, SidecarOptions, materialize_project_sidecars,
+};
 
 /// Errors returned while running `trivy-plugin-mise scan`.
 #[derive(Debug, Error)]
@@ -19,6 +25,9 @@ pub enum ScanError {
 
     #[error("cannot combine `--repo-only` and `--toolchain-only`")]
     ConflictingTiers,
+
+    #[error(transparent)]
+    MiseConfig(#[from] MiseConfigError),
 
     #[error(transparent)]
     MiseLock(#[from] MiseLockError),
@@ -63,6 +72,9 @@ pub struct ScanOptions {
     pub include_gobinary: bool,
     pub repo_only: bool,
     pub toolchain_only: bool,
+    pub include_local: bool,
+    pub mise_configs: Vec<PathBuf>,
+    pub mise_locks: Vec<PathBuf>,
     pub trivy_args: Vec<String>,
 }
 
@@ -86,6 +98,9 @@ impl From<ScanArgs> for ScanOptions {
             include_gobinary: args.include_gobinary,
             repo_only: args.repo_only,
             toolchain_only: args.toolchain_only,
+            include_local: args.include_local,
+            mise_configs: args.mise_config,
+            mise_locks: args.mise_lock,
             trivy_args: args.trivy_args,
         }
     }
@@ -105,6 +120,9 @@ impl From<&ScanArgs> for ScanOptions {
             include_gobinary: args.include_gobinary,
             repo_only: args.repo_only,
             toolchain_only: args.toolchain_only,
+            include_local: args.include_local,
+            mise_configs: args.mise_config.clone(),
+            mise_locks: args.mise_lock.clone(),
             trivy_args: args.trivy_args.clone(),
         }
     }
@@ -175,6 +193,25 @@ pub fn run_scan(options: &ScanOptions) -> Result<ScanOutcome, ScanError> {
         options.scanners.trim()
     };
 
+    let needs_full_project =
+        run_toolchain || !options.mise_configs.is_empty() || !options.mise_locks.is_empty();
+    let resolved_project = if needs_full_project {
+        let discovery = DiscoveryOptions {
+            include_local: options.include_local,
+            config_paths: options.mise_configs.clone(),
+            lock_paths: options.mise_locks.clone(),
+        };
+        Some(resolve_mise_project(&options.target, &discovery)?)
+    } else {
+        None
+    };
+
+    let skip_dirs_owned = match &resolved_project {
+        Some(project) => project.skip_dirs.clone(),
+        None => discover_standard_skip_dirs(&options.target),
+    };
+    let skip_dirs: Vec<&str> = skip_dirs_owned.iter().map(String::as_str).collect();
+
     let repo_findings = if run_repo {
         print_tier_line(
             options.quiet,
@@ -183,30 +220,29 @@ pub fn run_scan(options: &ScanOptions) -> Result<ScanOutcome, ScanError> {
                 options.target.display()
             ),
         )?;
-        run_trivy_scan("fs", repo_scanners, &options.target, &[".mise/locks"], &ctx)?
+        run_trivy_scan("fs", repo_scanners, &options.target, &skip_dirs, &ctx)?
     } else {
         false
     };
 
     let (toolchain_findings, has_toolchain_files) = if run_toolchain {
-        let mise_lock_path = options.target.join("mise.lock");
-        let lock = if mise_lock_path.is_file() {
-            Some(MiseLock::from_path(&mise_lock_path)?)
-        } else {
-            None
-        };
+        let project = resolved_project
+            .as_ref()
+            .expect("resolved_project is populated when run_toolchain is true");
+        emit_omitted_tool_warnings(&options.target, &project.omitted_tools);
 
         let workspace =
-            materialize_sidecars(&options.target, lock.as_ref(), &SidecarOptions::default())?;
+            materialize_project_sidecars(&options.target, project, &SidecarOptions::default())?;
         let has_files = workspace
             .entries()
             .iter()
             .any(|entry| !entry.materialized_files.is_empty());
 
         let findings = if has_files {
+            let sidecar_label = format_sidecar_dirs_label(&options.target, workspace.entries());
             print_tier_line(
                 options.quiet,
-                "Toolchain sidecar scan (.mise/locks/, trivy fs --scanners vuln)",
+                &format!("Toolchain sidecar scan ({sidecar_label}, trivy fs --scanners vuln)"),
             )?;
             run_trivy_scan("fs", "vuln", workspace.path(), &[], &ctx)?
         } else {
@@ -429,6 +465,40 @@ fn tier_status(enabled: bool, had_targets: bool, findings: bool) -> &'static str
         "findings"
     } else {
         "clean"
+    }
+}
+
+fn format_sidecar_dirs_label(target: &Path, entries: &[MaterializedEntry]) -> String {
+    let mut dirs = BTreeSet::new();
+    for entry in entries {
+        if entry.materialized_files.is_empty() {
+            continue;
+        }
+        // Typical layout is `<locks_root>/<tool>/<version>`; derive `<locks_root>/` when possible.
+        let locks_root = entry
+            .source_dir
+            .parent()
+            .and_then(Path::parent)
+            .unwrap_or(&entry.source_dir);
+        let display = locks_root.strip_prefix(target).unwrap_or(locks_root);
+        let rel = display
+            .components()
+            .filter_map(|c| match c {
+                std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        if rel.is_empty() {
+            dirs.insert(format!("{}/", locks_root.display()));
+        } else {
+            dirs.insert(format!("{rel}/"));
+        }
+    }
+    if dirs.is_empty() {
+        ".mise/locks/".to_string()
+    } else {
+        dirs.into_iter().collect::<Vec<_>>().join(", ")
     }
 }
 

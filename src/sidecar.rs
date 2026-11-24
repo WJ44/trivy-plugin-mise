@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
@@ -8,6 +8,9 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use thiserror::Error;
 
+use crate::mise_config::{
+    ResolvedMiseProject, discover_standard_sidecar_dirs, sidecar_dir_matches_active_tools,
+};
 use crate::mise_lock::MiseLock;
 
 /// Native manifest and lockfile names preserved when materializing a sidecar directory.
@@ -193,13 +196,14 @@ pub struct TrivyBomDependency {
     pub depends_on: Vec<String>,
 }
 
-/// Discovers sidecar lockfile directories referenced by `lock` and/or present under `<project_root>/.mise/locks/`.
+/// Discovers sidecar lockfile directories referenced by `lock` and/or present under standard sidecar lock directories.
 pub fn discover_sidecars(
     project_root: &Path,
     lock: Option<&MiseLock>,
 ) -> Result<Vec<DiscoveredSidecar>, SidecarError> {
     let mut discovered = Vec::new();
     let mut seen_dirs = BTreeSet::new();
+    let mut used_materialized_dirs = HashSet::new();
 
     if let Some(mise_lock) = lock {
         for tool in mise_lock.iter_tools() {
@@ -217,13 +221,15 @@ pub fn discover_sidecars(
                         path: source_dir.display().to_string(),
                         source,
                     })?;
-                ensure_within_project_root(project_root, &canonical, Path::new(&sidecar.path))?;
+                ensure_within_root(project_root, &canonical, Path::new(&sidecar.path))?;
                 if !seen_dirs.insert(canonical) {
                     continue;
                 }
 
-                let materialized_rel_dir =
-                    materialized_subdir(&rel_path, &tool.name, &tool.version);
+                let materialized_rel_dir = unique_materialized_dir(
+                    materialized_subdir(&rel_path, &tool.name, &tool.version),
+                    &mut used_materialized_dirs,
+                );
 
                 discovered.push(DiscoveredSidecar {
                     tool_name: Some(tool.name.clone()),
@@ -237,12 +243,140 @@ pub fn discover_sidecars(
         }
     }
 
-    let locks_root = project_root.join(".mise").join("locks");
-    if locks_root.is_dir() {
-        for tool_dir in read_sorted_subdirs(&locks_root)? {
+    let sidecar_roots = discover_standard_sidecar_dirs(project_root);
+    walk_sidecar_roots(
+        project_root,
+        &sidecar_roots,
+        None,
+        &BTreeSet::new(),
+        &mut seen_dirs,
+        &mut used_materialized_dirs,
+        &mut discovered,
+    )?;
+
+    Ok(discovered)
+}
+
+/// Discovers sidecar lockfile directories for a [`ResolvedMiseProject`], honoring layered
+/// lockfile-relative sidecar paths and excluding omitted or superseded tools.
+pub fn discover_project_sidecars(
+    project_root: &Path,
+    project: &ResolvedMiseProject,
+) -> Result<Vec<DiscoveredSidecar>, SidecarError> {
+    let mut discovered = Vec::new();
+    let mut seen_dirs = BTreeSet::new();
+    let mut used_materialized_dirs = HashSet::new();
+
+    let canonical_project_root = fs::canonicalize(project_root).ok();
+
+    let mut excluded_dirs = BTreeSet::new();
+    for excluded in &project.excluded_sidecars {
+        let Ok(rel_path) = validate_relative_path(&excluded.sidecar_path) else {
+            continue;
+        };
+        let lock_dir = excluded.lock_path.parent().unwrap_or(project_root);
+        let candidate = resolve_sidecar_source_dir(project_root, lock_dir, &rel_path);
+        if candidate.is_dir()
+            && let Ok(canonical) = fs::canonicalize(&candidate)
+        {
+            excluded_dirs.insert(canonical);
+        }
+    }
+
+    for resolved in &project.tools {
+        let lock_dir = resolved.lock_path.parent().unwrap_or(project_root);
+        let allowed_root = if let (Some(root_canon), Ok(lock_canon)) =
+            (&canonical_project_root, fs::canonicalize(lock_dir))
+            && lock_canon.starts_with(root_canon)
+        {
+            project_root
+        } else {
+            lock_dir
+        };
+
+        for (manager, sidecar) in &resolved.tool.sidecars {
+            let rel_path = validate_relative_path(&sidecar.path)?;
+            let source_dir = resolve_sidecar_source_dir(project_root, lock_dir, &rel_path);
+            if !source_dir.is_dir() {
+                return Err(SidecarError::MissingSidecarDir {
+                    path: source_dir.display().to_string(),
+                });
+            }
+
+            let canonical = fs::canonicalize(&source_dir).map_err(|source| SidecarError::Io {
+                path: source_dir.display().to_string(),
+                source,
+            })?;
+            ensure_within_root(allowed_root, &canonical, Path::new(&sidecar.path))?;
+            if !seen_dirs.insert(canonical) {
+                continue;
+            }
+
+            let materialized_rel_dir = unique_materialized_dir(
+                materialized_subdir(&rel_path, &resolved.tool.name, &resolved.tool.version),
+                &mut used_materialized_dirs,
+            );
+
+            discovered.push(DiscoveredSidecar {
+                tool_name: Some(resolved.tool.name.clone()),
+                version: Some(resolved.tool.version.clone()),
+                manager: Some(manager.clone()),
+                source_dir,
+                materialized_rel_dir,
+                expected_digest: sidecar.digest.clone(),
+            });
+        }
+    }
+
+    walk_sidecar_roots(
+        project_root,
+        &project.sidecar_lock_dirs,
+        project.active_tools.as_ref(),
+        &excluded_dirs,
+        &mut seen_dirs,
+        &mut used_materialized_dirs,
+        &mut discovered,
+    )?;
+
+    Ok(discovered)
+}
+
+fn resolve_sidecar_source_dir(project_root: &Path, lock_dir: &Path, rel_path: &Path) -> PathBuf {
+    let under_lock = lock_dir.join(rel_path);
+    if under_lock.is_dir() || lock_dir == project_root {
+        return under_lock;
+    }
+    let under_root = project_root.join(rel_path);
+    if under_root.is_dir() {
+        under_root
+    } else {
+        under_lock
+    }
+}
+
+fn walk_sidecar_roots(
+    project_root: &Path,
+    sidecar_roots: &[PathBuf],
+    active_tools: Option<&BTreeSet<String>>,
+    excluded_dirs: &BTreeSet<PathBuf>,
+    seen_dirs: &mut BTreeSet<PathBuf>,
+    used_materialized_dirs: &mut HashSet<PathBuf>,
+    discovered: &mut Vec<DiscoveredSidecar>,
+) -> Result<(), SidecarError> {
+    for locks_root in sidecar_roots {
+        if !locks_root.is_dir() {
+            continue;
+        }
+        for tool_dir in read_sorted_subdirs(locks_root)? {
             let Some(tool_seg) = tool_dir.file_name() else {
                 continue;
             };
+            let tool_seg_str = tool_seg.to_string_lossy();
+            if let Some(active) = active_tools
+                && !sidecar_dir_matches_active_tools(&tool_seg_str, active)
+            {
+                continue;
+            }
             for ver_dir in read_sorted_subdirs(&tool_dir)? {
                 let Some(ver_seg) = ver_dir.file_name() else {
                     continue;
@@ -251,16 +385,19 @@ pub fn discover_sidecars(
                     path: ver_dir.display().to_string(),
                     source,
                 })?;
-                ensure_within_project_root(project_root, &canonical, &ver_dir)?;
-                if !seen_dirs.insert(canonical) {
+                ensure_within_root(project_root, &canonical, &ver_dir)?;
+                if excluded_dirs.contains(&canonical) || !seen_dirs.insert(canonical) {
                     continue;
                 }
 
                 let version_str = ver_seg.to_string_lossy().into_owned();
-                let materialized_rel_dir = PathBuf::from(tool_seg).join(ver_seg);
+                let materialized_rel_dir = unique_materialized_dir(
+                    PathBuf::from(tool_seg).join(ver_seg),
+                    used_materialized_dirs,
+                );
 
                 discovered.push(DiscoveredSidecar {
-                    tool_name: Some(tool_seg.to_string_lossy().into_owned()),
+                    tool_name: Some(tool_seg_str.clone().into_owned()),
                     version: Some(version_str),
                     manager: None,
                     source_dir: ver_dir,
@@ -270,8 +407,21 @@ pub fn discover_sidecars(
             }
         }
     }
+    Ok(())
+}
 
-    Ok(discovered)
+fn unique_materialized_dir(base: PathBuf, used: &mut HashSet<PathBuf>) -> PathBuf {
+    if used.insert(base.clone()) {
+        return base;
+    }
+    let mut suffix = 2usize;
+    loop {
+        let candidate = PathBuf::from(format!("{}-{suffix}", base.display()));
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+        suffix += 1;
+    }
 }
 
 /// Verifies the SHA-256 digest of a discovered sidecar lockfile against `expected_digest`.
@@ -327,6 +477,23 @@ pub fn materialize_sidecars(
     options: &SidecarOptions,
 ) -> Result<MaterializedWorkspace, SidecarError> {
     let discovered = discover_sidecars(project_root, lock)?;
+    materialize_discovered_sidecars(&discovered, options)
+}
+
+/// Discovers, optionally verifies, and materializes sidecar lockfiles for a [`ResolvedMiseProject`].
+pub fn materialize_project_sidecars(
+    project_root: &Path,
+    project: &ResolvedMiseProject,
+    options: &SidecarOptions,
+) -> Result<MaterializedWorkspace, SidecarError> {
+    let discovered = discover_project_sidecars(project_root, project)?;
+    materialize_discovered_sidecars(&discovered, options)
+}
+
+fn materialize_discovered_sidecars(
+    discovered: &[DiscoveredSidecar],
+    options: &SidecarOptions,
+) -> Result<MaterializedWorkspace, SidecarError> {
     let temp_dir = tempfile::Builder::new()
         .prefix("trivy-plugin-mise-")
         .tempdir()
@@ -337,7 +504,7 @@ pub fn materialize_sidecars(
 
     let mut entries = Vec::with_capacity(discovered.len());
 
-    for sidecar in &discovered {
+    for sidecar in discovered {
         if options.verify_digests
             && let Some(expected_digest) = &sidecar.expected_digest
         {
@@ -476,6 +643,22 @@ pub fn extract_sidecar_json_with_args(
     Ok(bom)
 }
 
+/// End-to-end helper for a [`ResolvedMiseProject`] with additional raw Trivy arguments.
+pub fn extract_project_sidecar_json_with_args(
+    project_root: &Path,
+    project: &ResolvedMiseProject,
+    options: &SidecarOptions,
+    trivy_args: &[String],
+) -> Result<serde_json::Value, SidecarError> {
+    let workspace = materialize_project_sidecars(project_root, project, options)?;
+    let bom = extract_cyclonedx_json_from_workspace_with_args(&workspace, trivy_args)?;
+    workspace.close().map_err(|source| SidecarError::Io {
+        path: std::env::temp_dir().display().to_string(),
+        source,
+    })?;
+    Ok(bom)
+}
+
 /// End-to-end helper: discovers sidecars, verifies digests, materializes into a temporary workspace,
 /// extracts the CycloneDX BOM via Trivy, and cleans up the temporary workspace before returning.
 pub fn extract_sidecar_bom(
@@ -512,13 +695,13 @@ fn validate_relative_path(raw: &str) -> Result<PathBuf, SidecarError> {
     Ok(path.to_path_buf())
 }
 
-fn ensure_within_project_root(
-    project_root: &Path,
+fn ensure_within_root(
+    allowed_root: &Path,
     canonical_dir: &Path,
     reported_path: &Path,
 ) -> Result<(), SidecarError> {
-    let canonical_root = fs::canonicalize(project_root).map_err(|source| SidecarError::Io {
-        path: project_root.display().to_string(),
+    let canonical_root = fs::canonicalize(allowed_root).map_err(|source| SidecarError::Io {
+        path: allowed_root.display().to_string(),
         source,
     })?;
     if !canonical_dir.starts_with(&canonical_root) {
@@ -531,11 +714,18 @@ fn ensure_within_project_root(
 }
 
 fn materialized_subdir(rel_path: &Path, tool_name: &str, version: &str) -> PathBuf {
-    let locks_prefix = Path::new(".mise").join("locks");
-    if let Ok(stripped) = rel_path.strip_prefix(&locks_prefix)
-        && !stripped.as_os_str().is_empty()
-    {
-        return stripped.to_path_buf();
+    for prefix in [
+        Path::new(".config/mise/locks"),
+        Path::new(".config/.mise/locks"),
+        Path::new(".mise/locks"),
+        Path::new("mise/locks"),
+        Path::new("locks"),
+    ] {
+        if let Ok(stripped) = rel_path.strip_prefix(prefix)
+            && !stripped.as_os_str().is_empty()
+        {
+            return stripped.to_path_buf();
+        }
     }
 
     let sanitized_tool = tool_name.replace(['/', ':', '@'], "-");

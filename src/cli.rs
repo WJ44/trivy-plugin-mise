@@ -43,9 +43,18 @@ pub enum Commands {
         /// Target platform triple (for example `linux-x64`) for platform-specific hashes and download URLs.
         #[arg(long)]
         platform: Option<String>,
-        /// Skip SHA-256 digest verification for `.mise/locks/` sidecar lockfiles.
+        /// Skip SHA-256 digest verification for sidecar lockfiles.
         #[arg(long)]
         no_verify_digests: bool,
+        /// Include machine-local `mise` config and lockfiles (`*.local.toml`, `*.local.lock`).
+        #[arg(long)]
+        include_local: bool,
+        /// Custom `mise` configuration file path(s) (repeatable; overrides standard config discovery).
+        #[arg(long = "mise-config", value_name = "PATH")]
+        mise_config: Vec<PathBuf>,
+        /// Custom `mise` lockfile path(s) (repeatable; overrides standard lockfile discovery).
+        #[arg(long = "mise-lock", value_name = "PATH")]
+        mise_lock: Vec<PathBuf>,
         /// Target repository path.
         #[arg(default_value = ".")]
         path: PathBuf,
@@ -98,13 +107,25 @@ pub struct ScanArgs {
     #[arg(long)]
     pub include_gobinary: bool,
 
-    /// Scan only the repository target and skip `.mise/locks/` (and `--include-gobinary`).
+    /// Scan only the repository target and skip mise sidecar lock directories (and `--include-gobinary`).
     #[arg(long, conflicts_with = "toolchain_only")]
     pub repo_only: bool,
 
-    /// Scan only `.mise/locks/` sidecar lockfiles (plus `--include-gobinary` if requested) and skip the repository root scan.
+    /// Scan only mise sidecar lockfiles (plus `--include-gobinary` if requested) and skip the repository root scan.
     #[arg(long, conflicts_with = "repo_only")]
     pub toolchain_only: bool,
+
+    /// Include machine-local `mise` config and lockfiles (`*.local.toml`, `*.local.lock`).
+    #[arg(long)]
+    pub include_local: bool,
+
+    /// Custom `mise` configuration file path(s) (repeatable; overrides standard config discovery).
+    #[arg(long = "mise-config", value_name = "PATH")]
+    pub mise_config: Vec<PathBuf>,
+
+    /// Custom `mise` lockfile path(s) (repeatable; overrides standard lockfile discovery).
+    #[arg(long = "mise-lock", value_name = "PATH")]
+    pub mise_lock: Vec<PathBuf>,
 
     /// Additional arguments forwarded directly to underlying `trivy` invocations (after `--`).
     #[arg(last = true, value_name = "TRIVY_ARGS")]
@@ -125,6 +146,9 @@ impl Default for ScanArgs {
             include_gobinary: false,
             repo_only: false,
             toolchain_only: false,
+            include_local: false,
+            mise_config: Vec::new(),
+            mise_lock: Vec::new(),
             trivy_args: Vec::new(),
         }
     }
@@ -327,5 +351,103 @@ mod tests {
         ])
         .expect_err("--repo-only and --toolchain-only must conflict");
         assert_eq!(conflict.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn parse_mise_discovery_flags_on_sbom_and_scan() {
+        let sbom_cli = Cli::try_parse_from([
+            "trivy-plugin-mise",
+            "sbom",
+            "--include-local",
+            "--mise-config",
+            "custom/a.toml",
+            "--mise-config",
+            "custom/b.toml",
+            "--mise-lock",
+            "custom/a.lock",
+            "--mise-lock",
+            "custom/b.lock",
+            "/tmp/project",
+        ])
+        .expect("sbom mise discovery flags should parse");
+
+        match sbom_cli.into_command() {
+            Commands::Sbom {
+                include_local,
+                mise_config,
+                mise_lock,
+                path,
+                ..
+            } => {
+                assert!(include_local);
+                assert_eq!(
+                    mise_config,
+                    vec![
+                        PathBuf::from("custom/a.toml"),
+                        PathBuf::from("custom/b.toml")
+                    ]
+                );
+                assert_eq!(
+                    mise_lock,
+                    vec![
+                        PathBuf::from("custom/a.lock"),
+                        PathBuf::from("custom/b.lock")
+                    ]
+                );
+                assert_eq!(path, PathBuf::from("/tmp/project"));
+            }
+            other => panic!("expected Sbom command, got {other:?}"),
+        }
+
+        let scan_cli = Cli::try_parse_from([
+            "trivy-plugin-mise",
+            "scan",
+            "--include-local",
+            "--mise-config",
+            "custom/a.toml",
+            "--mise-config",
+            "custom/b.toml",
+            "--mise-lock",
+            "custom/a.lock",
+            "/tmp/project",
+        ])
+        .expect("scan mise discovery flags should parse");
+
+        match scan_cli.into_command() {
+            Commands::Scan(args) => {
+                assert!(args.include_local);
+                assert_eq!(
+                    args.mise_config,
+                    vec![
+                        PathBuf::from("custom/a.toml"),
+                        PathBuf::from("custom/b.toml")
+                    ]
+                );
+                assert_eq!(args.mise_lock, vec![PathBuf::from("custom/a.lock")]);
+                assert_eq!(args.target, PathBuf::from("/tmp/project"));
+            }
+            other => panic!("expected Scan command, got {other:?}"),
+        }
+
+        let default_scan_cli = Cli::try_parse_from([
+            "trivy-plugin-mise",
+            "--include-local",
+            "--mise-config",
+            "custom/a.toml",
+            "--mise-lock",
+            "custom/a.lock",
+            "/tmp/project",
+        ])
+        .expect("default scan mise discovery flags should parse");
+
+        match default_scan_cli.into_command() {
+            Commands::Scan(args) => {
+                assert!(args.include_local);
+                assert_eq!(args.mise_config, vec![PathBuf::from("custom/a.toml")]);
+                assert_eq!(args.mise_lock, vec![PathBuf::from("custom/a.lock")]);
+                assert_eq!(args.target, PathBuf::from("/tmp/project"));
+            }
+            other => panic!("expected Scan command, got {other:?}"),
+        }
     }
 }
