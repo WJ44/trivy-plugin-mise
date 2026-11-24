@@ -116,7 +116,7 @@ trivy-plugin-mise --help
 
 Running `trivy mise` (or `trivy-plugin-mise`) with no subcommand executes `scan`
 by default, matching standard Trivy plugin ergonomics. It runs the two-tier scan
-(repository `vuln,license` + `.mise/locks/` toolchain `vuln`), automatically
+(repository `vuln,license` + `mise` toolchain sidecar `vuln`), automatically
 discovering `<target>/trivy.yaml` and `<target>/.trivyignore.yaml` (or falling
 back to `<target>/.trivyignore`):
 

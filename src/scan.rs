@@ -480,19 +480,28 @@ fn format_sidecar_dirs_label(target: &Path, entries: &[MaterializedEntry]) -> St
             .parent()
             .and_then(Path::parent)
             .unwrap_or(&entry.source_dir);
-        let display = locks_root.strip_prefix(target).unwrap_or(locks_root);
-        let rel = display
-            .components()
-            .filter_map(|c| match c {
-                std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("/");
-        if rel.is_empty() {
-            dirs.insert(format!("{}/", locks_root.display()));
+        if let Ok(stripped) = locks_root.strip_prefix(target) {
+            let rel = stripped
+                .components()
+                .filter_map(|c| match c {
+                    std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            if rel.is_empty() {
+                dirs.insert(format!(
+                    "{}/",
+                    locks_root.display().to_string().trim_end_matches('/')
+                ));
+            } else {
+                dirs.insert(format!("{rel}/"));
+            }
         } else {
-            dirs.insert(format!("{rel}/"));
+            dirs.insert(format!(
+                "{}/",
+                locks_root.display().to_string().trim_end_matches('/')
+            ));
         }
     }
     if dirs.is_empty() {

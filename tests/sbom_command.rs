@@ -836,3 +836,91 @@ fn sbom_include_local_and_repeatable_custom_mise_config_and_lock_flags() {
         "expected missing path in stderr"
     );
 }
+
+#[test]
+fn sbom_handles_bare_cwd_relative_and_external_mise_lock_with_sidecars() {
+    let _guard = lock_trivy();
+    let tmp = TempDir::new().expect("create temp dir");
+    let project_dir = tmp.path().join("project");
+    let external_dir = tmp.path().join("external");
+    fs::create_dir_all(&project_dir).unwrap();
+    fs::create_dir_all(&external_dir).unwrap();
+
+    // Case 1: Bare cwd-relative `--mise-lock custom.lock` targeting another project_dir,
+    // with sidecar living next to `custom.lock` in `external_dir/locks/...`.
+    copy_dir_all(
+        &repo_root().join(".config/mise/locks/npm-prettier"),
+        &external_dir.join("locks/npm-prettier"),
+    );
+    fs::write(
+        external_dir.join("custom.lock"),
+        r#"lockfile_version = 3
+
+[[tools."npm:prettier"]]
+version = "3.10.1"
+aube = { path = "locks/npm-prettier/3.10.1" }
+backend = "npm:prettier"
+"#,
+    )
+    .unwrap();
+
+    let cwd_rel_out = bin()
+        .current_dir(&external_dir)
+        .args([
+            "sbom",
+            "--mode",
+            "components",
+            "--mise-lock",
+            "custom.lock",
+            project_dir.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sbom with bare cwd-relative --mise-lock");
+    assert!(
+        cwd_rel_out.status.success(),
+        "expected bare cwd-relative --mise-lock to succeed, stderr:\n{}",
+        String::from_utf8_lossy(&cwd_rel_out.stderr)
+    );
+    let cwd_bom: Value = serde_json::from_slice(&cwd_rel_out.stdout).unwrap();
+    let cwd_purls = collect_purls(cwd_bom["components"].as_array().unwrap());
+    assert!(cwd_purls.contains("pkg:npm/prettier@3.10.1"));
+
+    // Case 2: External `--mise-lock /outside/project-sidecar.lock` whose sidecar path falls back
+    // to `<project_dir>/.mise/locks/npm-prettier/3.10.1`.
+    copy_dir_all(
+        &repo_root().join(".config/mise/locks/npm-prettier"),
+        &project_dir.join(".mise/locks/npm-prettier"),
+    );
+    let external_lock = external_dir.join("project-sidecar.lock");
+    fs::write(
+        &external_lock,
+        r#"lockfile_version = 3
+
+[[tools."npm:prettier"]]
+version = "3.10.1"
+aube = { path = ".mise/locks/npm-prettier/3.10.1" }
+backend = "npm:prettier"
+"#,
+    )
+    .unwrap();
+
+    let ext_out = bin()
+        .args([
+            "sbom",
+            "--mode",
+            "components",
+            "--mise-lock",
+            external_lock.to_str().unwrap(),
+            project_dir.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sbom with external --mise-lock referencing project_root sidecar");
+    assert!(
+        ext_out.status.success(),
+        "expected external --mise-lock with project_root sidecar to succeed, stderr:\n{}",
+        String::from_utf8_lossy(&ext_out.stderr)
+    );
+    let ext_bom: Value = serde_json::from_slice(&ext_out.stdout).unwrap();
+    let ext_purls = collect_purls(ext_bom["components"].as_array().unwrap());
+    assert!(ext_purls.contains("pkg:npm/prettier@3.10.1"));
+}

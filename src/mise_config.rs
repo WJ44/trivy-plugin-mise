@@ -207,13 +207,23 @@ pub fn discover_standard_skip_dirs(project_root: &Path) -> Vec<String> {
 /// Parses a `mise` TOML configuration string and returns the set of declared tool names
 /// from `[tools]` and `[tasks.<name>.tools]`.
 pub fn parse_mise_config_tools_str(content: &str) -> Result<BTreeSet<String>, toml::de::Error> {
+    let (enabled, _disabled) = parse_mise_config_layer_str(content)?;
+    Ok(enabled)
+}
+
+fn parse_mise_config_layer_str(
+    content: &str,
+) -> Result<(BTreeSet<String>, BTreeSet<String>), toml::de::Error> {
     let value: toml::Value = toml::from_str(content)?;
-    let mut tools = BTreeSet::new();
+    let mut enabled = BTreeSet::new();
+    let mut disabled = BTreeSet::new();
 
     if let Some(tools_table) = value.get("tools").and_then(toml::Value::as_table) {
         for (tool_name, spec) in tools_table {
-            if !matches!(spec, toml::Value::Array(arr) if arr.is_empty()) {
-                tools.insert(tool_name.clone());
+            if matches!(spec, toml::Value::Array(arr) if arr.is_empty()) {
+                disabled.insert(tool_name.clone());
+            } else {
+                enabled.insert(tool_name.clone());
             }
         }
     }
@@ -227,23 +237,30 @@ pub fn parse_mise_config_tools_str(content: &str) -> Result<BTreeSet<String>, to
             {
                 for (tool_name, spec) in task_tools {
                     if !matches!(spec, toml::Value::Array(arr) if arr.is_empty()) {
-                        tools.insert(tool_name.clone());
+                        enabled.insert(tool_name.clone());
                     }
                 }
             }
         }
     }
 
-    Ok(tools)
+    Ok((enabled, disabled))
 }
 
 /// Reads and parses a `mise` TOML configuration file from disk, returning its declared tool names.
 pub fn parse_mise_config_tools(path: &Path) -> Result<BTreeSet<String>, MiseConfigError> {
+    let (enabled, _disabled) = parse_mise_config_layer(path)?;
+    Ok(enabled)
+}
+
+fn parse_mise_config_layer(
+    path: &Path,
+) -> Result<(BTreeSet<String>, BTreeSet<String>), MiseConfigError> {
     let content = fs::read_to_string(path).map_err(|source| MiseConfigError::Io {
         path: path.display().to_string(),
         source,
     })?;
-    parse_mise_config_tools_str(&content).map_err(|source| MiseConfigError::Parse {
+    parse_mise_config_layer_str(&content).map_err(|source| MiseConfigError::Parse {
         path: path.display().to_string(),
         source,
     })
@@ -266,7 +283,11 @@ pub fn resolve_mise_project(
     } else {
         let mut set = BTreeSet::new();
         for cfg_path in &config_files {
-            set.extend(parse_mise_config_tools(cfg_path)?);
+            let (enabled, disabled) = parse_mise_config_layer(cfg_path)?;
+            for tool in disabled {
+                set.remove(&tool);
+            }
+            set.extend(enabled);
         }
         Some(set)
     };
@@ -451,6 +472,15 @@ pub fn sanitize_tool_dir_name(tool_name: &str) -> String {
     out
 }
 
+/// Returns the non-empty parent directory of `path`, or `Path::new(".")` for bare filenames
+/// whose `.parent()` is `Some("")`.
+pub(crate) fn non_empty_parent(path: &Path) -> &Path {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
+
 fn resolve_explicit_paths(
     project_root: &Path,
     paths: &[PathBuf],
@@ -465,7 +495,10 @@ fn resolve_explicit_paths(
             if under_root.is_file() {
                 under_root
             } else if raw.is_file() {
-                raw.clone()
+                match std::env::current_dir() {
+                    Ok(cwd) => cwd.join(raw),
+                    Err(_) => Path::new(".").join(raw),
+                }
             } else {
                 under_root
             }
@@ -550,7 +583,7 @@ fn compute_skip_dirs(project_root: &Path, sidecar_refs: &[(PathBuf, String)]) ->
             continue;
         }
 
-        let lock_dir = lock_path.parent().unwrap_or(project_root);
+        let lock_dir = non_empty_parent(lock_path);
         let candidate = {
             let under_lock = lock_dir.join(rel);
             if under_lock.is_dir() {
@@ -927,5 +960,46 @@ backend = "core:rust"
         );
         assert_eq!(sanitize_tool_dir_name("npm:prettier"), "npm-prettier");
         assert_eq!(sanitize_tool_dir_name("pipx:black"), "pipx-black");
+    }
+
+    #[test]
+    fn higher_precedence_empty_array_disables_tool_from_lower_layer() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        fs::create_dir_all(root.join(".config/mise/conf.d")).unwrap();
+        fs::write(
+            root.join(".config/mise/conf.d/base.toml"),
+            "[tools]\nnode = \"24.0.0\"\nruff = \"0.17.4\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".config/mise/mise.lock"),
+            r#"
+lockfile_version = 3
+
+[[tools.node]]
+version = "24.0.0"
+backend = "core:node"
+
+[[tools.ruff]]
+version = "0.17.4"
+backend = "aqua:astral-sh/ruff"
+"#,
+        )
+        .unwrap();
+
+        // Root mise.toml disables `ruff` using `ruff = []`.
+        fs::write(root.join("mise.toml"), "[tools]\nruff = []\n").unwrap();
+
+        let project = resolve_mise_project(root, &DiscoveryOptions::default()).unwrap();
+        assert_eq!(
+            project.active_tools,
+            Some(BTreeSet::from(["node".to_string()]))
+        );
+        assert_eq!(project.tools.len(), 1);
+        assert_eq!(project.tools[0].tool.name, "node");
+        assert_eq!(project.omitted_tools.len(), 1);
+        assert_eq!(project.omitted_tools[0].tool_name, "ruff");
     }
 }

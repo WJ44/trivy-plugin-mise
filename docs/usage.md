@@ -310,8 +310,11 @@ tools:
 - Any lockfile tool entry not declared in an active config is **omitted** from
   both `sbom` and `scan` output (along with its sidecar lockfile directory), and
   a warning is emitted to `stderr`:
-  `warning: omitting unconfigured tool \`<tool>\` from \`<lockfile>\` (not
-  declared in active mise config)`.
+
+  ```text
+  warning: omitting unconfigured tool `<tool>` from `<lockfile>` (not declared in active mise config)
+  ```
+
 - **Backward compatibility:** Lockfile-only repositories or fixtures with zero
   `mise` configuration files keep all lockfile entries and sidecar directories
   without warnings.
@@ -382,21 +385,25 @@ Each normalized `mise.lock` component sets `bom-ref` to its PURL and records
   - Top-level `mise:provenance` is emitted when all provenance-bearing platforms
     on the tool agree on the same provenance type.
 
-### `.mise/locks/<tool>/<version>/` Sidecars & Digest Verification
+### Sidecar Lockfiles (`locks/<tool>/<version>/`) & Digest Verification
 
 When `mise` installs ecosystem-backed tools (such as `npm:` packages locked via
 `aube` or Python tools locked via `uv`), transitive dependency lockfiles can be
-stored under `.mise/locks/<tool>/<version>/`.
+stored in sidecar directories (`.config/mise/locks/<tool>/<version>/`,
+`.mise/locks/<tool>/<version>/`, `mise/locks/<tool>/<version>/`, or a
+lockfile-relative `locks/` directory).
 
 1. **Discovery & Path Validation:**
-   - `trivy-plugin-mise` first reads sidecar references declared on tools in
-     `mise.lock` (e.g.
-     `aube = { path = ".mise/locks/npm-prettier/3.5.3", digest = "sha256:..." }`),
-     and then scans `.mise/locks/<tool>/<version>/` for any additional sidecar
-     directories.
+   - `trivy-plugin-mise` first reads sidecar references declared on active tools
+     in each discovered (or `--mise-lock`) lockfile (resolving relative to that
+     lockfile's directory first, e.g. `locks/npm-prettier/3.10.1` in
+     `.config/mise/mise.lock`, then falling back to the project root, e.g.
+     `.mise/locks/npm-prettier/3.5.3`), and then scans standard sidecar lock
+     directories for any additional active sidecars.
    - All sidecar paths are validated to ensure they remain strictly inside the
-     target project root (rejecting absolute paths, `..` traversal, or symlinks
-     escaping the workspace).
+     base root they resolved under (the target project root, or the explicit
+     lockfile directory for external `--mise-lock` paths), rejecting absolute
+     paths, `..` traversal, or symlinks escaping that root.
 2. **SHA-256 Digest Verification:**
    - When a sidecar entry in `mise.lock` specifies `digest = "sha256:<64-hex>"`,
      `trivy-plugin-mise` computes the SHA-256 digest of the sidecar lockfile

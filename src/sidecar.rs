@@ -9,7 +9,8 @@ use tempfile::TempDir;
 use thiserror::Error;
 
 use crate::mise_config::{
-    ResolvedMiseProject, discover_standard_sidecar_dirs, sidecar_dir_matches_active_tools,
+    ResolvedMiseProject, discover_standard_sidecar_dirs, non_empty_parent,
+    sidecar_dir_matches_active_tools,
 };
 use crate::mise_lock::MiseLock;
 
@@ -274,8 +275,8 @@ pub fn discover_project_sidecars(
         let Ok(rel_path) = validate_relative_path(&excluded.sidecar_path) else {
             continue;
         };
-        let lock_dir = excluded.lock_path.parent().unwrap_or(project_root);
-        let candidate = resolve_sidecar_source_dir(project_root, lock_dir, &rel_path);
+        let lock_dir = non_empty_parent(&excluded.lock_path);
+        let (candidate, _) = resolve_sidecar_source_dir(project_root, lock_dir, &rel_path);
         if candidate.is_dir()
             && let Ok(canonical) = fs::canonicalize(&candidate)
         {
@@ -284,19 +285,19 @@ pub fn discover_project_sidecars(
     }
 
     for resolved in &project.tools {
-        let lock_dir = resolved.lock_path.parent().unwrap_or(project_root);
-        let allowed_root = if let (Some(root_canon), Ok(lock_canon)) =
+        let lock_dir = non_empty_parent(&resolved.lock_path);
+        let lock_dir_in_project = if let (Some(root_canon), Ok(lock_canon)) =
             (&canonical_project_root, fs::canonicalize(lock_dir))
-            && lock_canon.starts_with(root_canon)
         {
-            project_root
+            lock_canon.starts_with(root_canon)
         } else {
-            lock_dir
+            false
         };
 
         for (manager, sidecar) in &resolved.tool.sidecars {
             let rel_path = validate_relative_path(&sidecar.path)?;
-            let source_dir = resolve_sidecar_source_dir(project_root, lock_dir, &rel_path);
+            let (source_dir, resolved_from_project_root) =
+                resolve_sidecar_source_dir(project_root, lock_dir, &rel_path);
             if !source_dir.is_dir() {
                 return Err(SidecarError::MissingSidecarDir {
                     path: source_dir.display().to_string(),
@@ -307,6 +308,11 @@ pub fn discover_project_sidecars(
                 path: source_dir.display().to_string(),
                 source,
             })?;
+            let allowed_root = if resolved_from_project_root || lock_dir_in_project {
+                project_root
+            } else {
+                lock_dir
+            };
             ensure_within_root(allowed_root, &canonical, Path::new(&sidecar.path))?;
             if !seen_dirs.insert(canonical) {
                 continue;
@@ -341,16 +347,22 @@ pub fn discover_project_sidecars(
     Ok(discovered)
 }
 
-fn resolve_sidecar_source_dir(project_root: &Path, lock_dir: &Path, rel_path: &Path) -> PathBuf {
+/// Resolves a sidecar path relative to `lock_dir` first, falling back to `project_root`.
+/// Returns `(resolved_path, resolved_from_project_root)`.
+fn resolve_sidecar_source_dir(
+    project_root: &Path,
+    lock_dir: &Path,
+    rel_path: &Path,
+) -> (PathBuf, bool) {
     let under_lock = lock_dir.join(rel_path);
     if under_lock.is_dir() || lock_dir == project_root {
-        return under_lock;
+        return (under_lock, lock_dir == project_root);
     }
     let under_root = project_root.join(rel_path);
     if under_root.is_dir() {
-        under_root
+        (under_root, true)
     } else {
-        under_lock
+        (under_lock, false)
     }
 }
 

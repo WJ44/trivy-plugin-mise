@@ -763,8 +763,7 @@ backend = "npm:localvuln"
     )
     .unwrap();
 
-    // Without --include-local, local tool & sidecar are excluded; scan exits 0.
-    // Note: pass `-- --skip-dirs custom/locks` so the custom dir isn't scanned as repo deps in this check.
+    // Without --include-local, local tool & sidecar are excluded; toolchain-only scan exits 0.
     let without_local = bin()
         .args(["scan", "--toolchain-only"])
         .arg(tmp.path())
