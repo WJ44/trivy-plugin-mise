@@ -97,13 +97,12 @@ fn scan_clean_repository_exits_zero() {
     let repo_idx = stderr
         .find("==> Repository scan (trivy fs --scanners vuln,license):")
         .expect("expected repository tier header in stderr");
-    let toolchain_idx = stderr
-        .find("==> Toolchain sidecar scan (.mise/locks/, trivy fs --scanners vuln)")
-        .expect("expected toolchain sidecar tier header in stderr");
     let summary_idx = stderr
-        .find("==> Scan summary: repo=clean, toolchain=clean, gobinary=skipped -> clean (exit code 0)")
+        .find(
+            "==> Scan summary: repo=clean, toolchain=none, gobinary=skipped -> clean (exit code 0)",
+        )
         .expect("expected scan summary line in stderr");
-    assert!(repo_idx < toolchain_idx && toolchain_idx < summary_idx);
+    assert!(repo_idx < summary_idx);
 }
 
 #[test]

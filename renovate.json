@@ -2,7 +2,18 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:best-practices", ":semanticCommitTypeAll(chore)"],
   "labels": ["chore"],
-  "ignorePaths": ["**/.mise/**"],
+  "ignorePaths": ["**/.mise/**", "**/.config/mise/locks/**"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^container/Dockerfile$/"],
+      "matchStrings": [
+        "ARG MISE_VERSION=(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "depNameTemplate": "jdx/mise",
+      "datasourceTemplate": "github-releases"
+    }
+  ],
   "rebaseWhen": "auto",
   "packageRules": [
     {

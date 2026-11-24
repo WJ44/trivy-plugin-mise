@@ -11,10 +11,37 @@ fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
+fn copy_dir_all(src: &Path, dst: &Path) {
+    fs::create_dir_all(dst).unwrap();
+    for entry in fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_all(&path, &target);
+        } else {
+            fs::copy(&path, &target).unwrap();
+        }
+    }
+}
+
+fn setup_sidecar_project() -> (TempDir, MiseLock) {
+    let tmp = TempDir::new().expect("create temp project");
+    let raw = fs::read_to_string(repo_root().join(".config/mise/mise.lock")).unwrap();
+    let adjusted = raw.replace("path = \"locks/", "path = \".mise/locks/");
+    fs::write(tmp.path().join("mise.lock"), adjusted).unwrap();
+    copy_dir_all(
+        &repo_root().join(".config/mise/locks"),
+        &tmp.path().join(".mise/locks"),
+    );
+    let lock = MiseLock::from_path(tmp.path().join("mise.lock")).expect("mise.lock should parse");
+    (tmp, lock)
+}
+
 #[test]
 fn materializes_aube_lockfiles_as_pnpm_lock_and_cleans_up() {
-    let root = repo_root();
-    let lock = MiseLock::from_path(root.join("mise.lock")).expect("repo mise.lock should parse");
+    let (project, lock) = setup_sidecar_project();
+    let root = project.path();
 
     let workspace = materialize_sidecars(root, Some(&lock), &SidecarOptions::default())
         .expect("materialization with digest verification should succeed");
@@ -54,12 +81,12 @@ fn digest_verification_detects_mismatch_and_can_be_skipped() {
     let sidecar_dir = tmp.path().join(".mise/locks/npm-prettier/3.10.1");
     fs::create_dir_all(&sidecar_dir).unwrap();
     fs::copy(
-        repo_root().join(".mise/locks/npm-prettier/3.10.1/aube-lock.yaml"),
+        repo_root().join(".config/mise/locks/npm-prettier/3.10.1/aube-lock.yaml"),
         sidecar_dir.join("aube-lock.yaml"),
     )
     .unwrap();
     fs::copy(
-        repo_root().join(".mise/locks/npm-prettier/3.10.1/package.json"),
+        repo_root().join(".config/mise/locks/npm-prettier/3.10.1/package.json"),
         sidecar_dir.join("package.json"),
     )
     .unwrap();
@@ -107,8 +134,8 @@ fn preserves_native_uv_lockfiles_without_mise_lock() {
 
 #[test]
 fn extracts_direct_and_transitive_npm_components_and_dependencies_via_trivy() {
-    let root = repo_root();
-    let lock = MiseLock::from_path(root.join("mise.lock")).expect("repo mise.lock should parse");
+    let (project, lock) = setup_sidecar_project();
+    let root = project.path();
 
     let bom = extract_sidecar_bom(root, Some(&lock), &SidecarOptions::default())
         .expect("trivy extraction should succeed");

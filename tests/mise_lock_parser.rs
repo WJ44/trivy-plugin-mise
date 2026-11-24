@@ -6,6 +6,7 @@ use trivy_plugin_mise::purl::tool_to_purl;
 
 const FIXTURE_LOCK: &str = include_str!("fixtures/mise.lock");
 const REPO_LOCK: &str = include_str!("../mise.lock");
+const HARNESS_LOCK: &str = include_str!("../.config/mise/mise.lock");
 
 fn prop<'a>(component: &'a CycloneDxComponent, key: &str) -> Option<&'a str> {
     component
@@ -146,9 +147,19 @@ fn parses_and_normalizes_repository_mise_lock() {
     let components = normalize_lock(&lock, None).expect("normalize should succeed");
     assert!(!components.is_empty());
 
-    let trivy = components
+    let rust = components
+        .iter()
+        .find(|c| c.name == "rust")
+        .expect("rust in repo mise.lock");
+    assert_eq!(prop(rust, "mise:backend"), Some("core:rust"));
+
+    let harness_lock =
+        MiseLock::from_str(HARNESS_LOCK).expect(".config/mise/mise.lock should parse");
+    let harness_components =
+        normalize_lock(&harness_lock, None).expect("harness normalize should succeed");
+    let trivy = harness_components
         .iter()
         .find(|c| c.name == "trivy")
-        .expect("trivy in repo mise.lock");
+        .expect("trivy in .config/mise/mise.lock");
     assert_eq!(prop(trivy, "mise:provenance"), Some("cosign"));
 }
