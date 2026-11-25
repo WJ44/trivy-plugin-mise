@@ -77,7 +77,7 @@ trivy plugin update
 trivy plugin search mise
 trivy plugin install mise
 # Or install a specific version:
-trivy plugin install mise@v1.2.0 # x-release-please-version
+trivy plugin install mise@v1.3.0 # x-release-please-version
 
 # Or install directly from GitHub without the plugin index:
 trivy plugin install github.com/WJ44/trivy-plugin-mise
@@ -94,7 +94,7 @@ Pin in `mise.toml` using the `github:` backend (alongside `trivy`):
 ```toml
 [tools]
 trivy = "0.76.2"
-"github:WJ44/trivy-plugin-mise" = "1.2.0" # x-release-please-version
+"github:WJ44/trivy-plugin-mise" = "1.3.0" # x-release-please-version
 ```
 
 Then run `mise install` (and `mise lock` to pin platform checksums) and invoke

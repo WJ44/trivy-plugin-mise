@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.0](https://github.com/WJ44/trivy-plugin-mise/compare/v1.2.0...v1.3.0) (2026-11-25)
+
+
+### Features
+
+* **mise-config:** support layered mise configs and filter stale lock entries ([#43](https://github.com/WJ44/trivy-plugin-mise/issues/43)) ([1107381](https://github.com/WJ44/trivy-plugin-mise/commit/1107381a982be276f969b8cec083502c3e6f1bff))
+* **mise-lock:** support lockfile_version 4 and package provenance ([#42](https://github.com/WJ44/trivy-plugin-mise/issues/42)) ([eb9c82d](https://github.com/WJ44/trivy-plugin-mise/commit/eb9c82d570144daae42e34b3620a5b0cfc1046c2)), closes [#40](https://github.com/WJ44/trivy-plugin-mise/issues/40)
+
 ## [1.2.0](https://github.com/WJ44/trivy-plugin-mise/compare/v1.1.0...v1.2.0) (2026-11-23)
 
 
