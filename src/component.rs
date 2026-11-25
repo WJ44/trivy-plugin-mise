@@ -59,7 +59,16 @@ pub fn normalize_lock(
     lock: &MiseLock,
     target_platform: Option<&str>,
 ) -> Result<Vec<CycloneDxComponent>, PurlError> {
-    lock.iter_tools()
+    normalize_tools(lock.iter_tools(), target_platform)
+}
+
+/// Normalizes an iterator of [`LockedTool`] entries into [`CycloneDxComponent`]s.
+pub fn normalize_tools<'a>(
+    tools: impl IntoIterator<Item = &'a LockedTool>,
+    target_platform: Option<&str>,
+) -> Result<Vec<CycloneDxComponent>, PurlError> {
+    tools
+        .into_iter()
         .map(|tool| normalize_tool(tool, target_platform))
         .collect()
 }

@@ -176,14 +176,17 @@ trivy-plugin-mise sbom [OPTIONS] [PATH] [-- <TRIVY_ARGS>...]
 trivy mise sbom [OPTIONS] [PATH] [-- <TRIVY_ARGS>...]
 ```
 
-| Argument / Flag       | Default       | Description                                                                                                                                                                                            |
-| --------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `[PATH]`              | `.`           | Target repository directory containing `mise.lock` and/or `.mise/locks/`.                                                                                                                              |
-| `--mode <MODE>`       | `formulation` | Output mode: `formulation` (product SBOM via `trivy fs` + `mise` toolchain under `formulation[]`) or `components` (standalone `mise` toolchain SBOM under top-level `components[]`).                   |
-| `-o, --output <PATH>` | stdout        | Write pretty-printed CycloneDX 1.7 JSON to `<PATH>` (creating parent directories if needed) instead of standard output.                                                                                |
-| `--platform <TRIPLE>` | _(none)_      | Target platform triple (for example `linux-x64`, `linux-arm64`, `macos-arm64`, `windows-x64`). Selects platform-specific component `hashes[]`, download URLs, and provenance; when omitted, emits all. |
-| `--no-verify-digests` | `false`       | Skip SHA-256 digest verification for `.mise/locks/` sidecar lockfiles against `mise.lock` `digest` entries. By default, digest mismatches abort SBOM generation with a non-zero exit code.             |
-| `-- <TRIVY_ARGS>...`  | _(none)_      | Additional arguments forwarded directly to underlying `trivy fs --format cyclonedx` invocations (for example `-- --skip-dirs vendor --offline-scan`).                                                  |
+| Argument / Flag        | Default       | Description                                                                                                                                                                                            |
+| ---------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `[PATH]`               | `.`           | Target repository directory containing `mise` configuration files, lockfiles, and/or sidecar lock directories.                                                                                         |
+| `--mode <MODE>`        | `formulation` | Output mode: `formulation` (product SBOM via `trivy fs` + `mise` toolchain under `formulation[]`) or `components` (standalone `mise` toolchain SBOM under top-level `components[]`).                   |
+| `-o, --output <PATH>`  | stdout        | Write pretty-printed CycloneDX 1.7 JSON to `<PATH>` (creating parent directories if needed) instead of standard output.                                                                                |
+| `--platform <TRIPLE>`  | _(none)_      | Target platform triple (for example `linux-x64`, `linux-arm64`, `macos-arm64`, `windows-x64`). Selects platform-specific component `hashes[]`, download URLs, and provenance; when omitted, emits all. |
+| `--no-verify-digests`  | `false`       | Skip SHA-256 digest verification for sidecar lockfiles against `mise.lock` `digest` entries. By default, digest mismatches abort SBOM generation with a non-zero exit code.                            |
+| `--include-local`      | `false`       | Include machine-local `mise` configuration and lockfiles (`*.local.toml` and `*.local.lock`), which are excluded by default for reproducible repository/CI SBOMs.                                      |
+| `--mise-config <PATH>` | _(auto)_      | Custom `mise` configuration file path (repeatable). Overrides standard config file discovery; relative paths resolve against `[PATH]` first, then the current working directory.                       |
+| `--mise-lock <PATH>`   | _(auto)_      | Custom `mise` lockfile path (repeatable). Overrides standard lockfile discovery; relative paths resolve against `[PATH]` first, then the current working directory.                                    |
+| `-- <TRIVY_ARGS>...`   | _(none)_      | Additional arguments forwarded directly to underlying `trivy fs --format cyclonedx` invocations (for example `-- --skip-dirs vendor --offline-scan`).                                                  |
 
 ### `scan` (Default Subcommand)
 
@@ -206,9 +209,12 @@ trivy mise [scan] [OPTIONS] [TARGET] [-- <TRIVY_ARGS>...]
 | `--ignore-unfixed`          | `false`                                        | Ignore unfixed vulnerabilities (forwarded as `--ignore-unfixed` to underlying Trivy invocations).                                                                                  |
 | `--scanners <SCANNERS>`     | `vuln,license`                                 | Comma-separated list of scanners for the Tier 1 repository scan (for example `vuln` or `vuln,license`). Tier 2 (`toolchain`) and Tier 3 (`gobinary`) always run `--scanners vuln`. |
 | `--exit-code <CODE>`        | `1`                                            | Exit code returned when unaccepted vulnerability or license findings are detected in any enabled scan tier.                                                                        |
-| `--repo-only`               | `false`                                        | Run only Tier 1 (repository scan) and skip `.mise/locks/` toolchain sidecars and `--include-gobinary`. Conflicts with `--toolchain-only`.                                          |
-| `--toolchain-only`          | `false`                                        | Run only Tier 2 (`.mise/locks/` sidecar lockfiles, plus Tier 3 if `--include-gobinary` is also set) and skip the Tier 1 repository root scan. Conflicts with `--repo-only`.        |
+| `--repo-only`               | `false`                                        | Run only Tier 1 (repository scan) and skip `mise` toolchain sidecar lockfiles and `--include-gobinary`. Conflicts with `--toolchain-only`.                                         |
+| `--toolchain-only`          | `false`                                        | Run only Tier 2 (`mise` sidecar lockfiles, plus Tier 3 if `--include-gobinary` is also set) and skip the Tier 1 repository root scan. Conflicts with `--repo-only`.                |
 | `--include-gobinary`        | `false`                                        | Enable Tier 3: query active `mise` tool install directories via `mise ls --json` and scan each directory with `trivy rootfs --scanners vuln` (ignored when `--repo-only` is set).  |
+| `--include-local`           | `false`                                        | Include machine-local `mise` configuration and lockfiles (`*.local.toml` and `*.local.lock`), which are excluded by default for reproducible repository/CI scans.                  |
+| `--mise-config <PATH>`      | _(auto)_                                       | Custom `mise` configuration file path (repeatable). Overrides standard config file discovery; relative paths resolve against `[TARGET]` first, then the current working directory. |
+| `--mise-lock <PATH>`        | _(auto)_                                       | Custom `mise` lockfile path (repeatable). Overrides standard lockfile discovery; relative paths resolve against `[TARGET]` first, then the current working directory.              |
 | `-- <TRIVY_ARGS>...`        | _(none)_                                       | Additional arguments forwarded directly to underlying `trivy` invocations across all active tiers (for example `-- --skip-db-update --offline-scan`).                              |
 
 ### `version` / `--version`
@@ -224,14 +230,102 @@ trivy mise version
 
 ---
 
-## `mise.lock` & Sidecar Lockfiles (`.mise/locks/`)
+## Layered `mise` Config, Lockfile & Sidecar Discovery
+
+`trivy-plugin-mise` discovers standard repository-scoped `mise` configurations,
+lockfiles, and sidecar lock directories via pure filesystem parsing (no `mise`
+binary required), following the
+[official `mise` configuration hierarchy](https://mise.jdx.dev/configuration.html).
+
+### Supported Standard Paths (Lowest to Highest Precedence)
+
+- **Configuration files (default, non-local):**
+  1. `.config/mise/conf.d/*.toml` (alphabetical, excluding `*.local.toml`)
+  2. `.config/mise/config.toml`
+  3. `.config/mise/mise.toml`
+  4. `.config/mise.toml`
+  5. `.mise/conf.d/*.toml` (alphabetical, excluding `*.local.toml`)
+  6. `.mise/config.toml`
+  7. `mise/conf.d/*.toml` (alphabetical, excluding `*.local.toml`)
+  8. `mise/config.toml`
+  9. `mise.toml`
+  10. `.mise.toml`
+- **Lockfiles (default, non-local):**
+  1. `.config/mise/mise.lock`
+  2. `.config/mise.lock`
+  3. `.mise/mise.lock`
+  4. `mise/mise.lock`
+  5. `mise.lock`
+- **Sidecar lock directories:**
+  - `.config/mise/locks/`, `.config/.mise/locks/`, `.mise/locks/`, and
+    `mise/locks/`. Sidecar paths recorded inside a lockfile (for example
+    `path = "locks/npm-prettier/3.10.1"` in `.config/mise/mise.lock` or
+    `path = ".mise/locks/npm-prettier/3.10.1"` in root `mise.lock`) resolve
+    relative to that lockfile's parent directory first, falling back to the
+    target root.
+
+When the same tool key appears in multiple lockfiles, higher-precedence
+lockfiles override lower-precedence entries (for example, root `mise.lock`
+overrides `.config/mise/mise.lock`).
+
+### Machine-Local Overrides (`--include-local`)
+
+Machine-local files (`*.local.toml` and `*.local.lock`, including
+`.config/mise/conf.d/*.local.toml`, `.config/mise/config.local.toml`,
+`.config/mise/mise.local.toml`, `.config/mise.local.toml`,
+`.mise/conf.d/*.local.toml`, `.mise/config.local.toml`,
+`mise/conf.d/*.local.toml`, `mise/config.local.toml`, `mise.local.toml`,
+`.mise.local.toml`, and their corresponding `*.local.lock` files) are **excluded
+by default** so repository and CI SBOMs/scans stay reproducible. Pass
+`--include-local` on `sbom` or `scan` to opt in.
+
+### Custom / Non-Standard Paths (`--mise-config`, `--mise-lock`)
+
+For non-standard layouts or targeted scans, pass repeatable
+`--mise-config <PATH>` and/or `--mise-lock <PATH>` flags on `sbom` or `scan`:
+
+```bash
+trivy-plugin-mise sbom \
+  --mise-config infra/base.toml \
+  --mise-config infra/extra.toml \
+  --mise-lock infra/base.lock \
+  --mise-lock infra/extra.lock \
+  --output sbom.cdx.json
+
+trivy-plugin-mise scan --mise-config infra/mise.toml --mise-lock infra/mise.lock
+```
+
+- Passing one or more `--mise-config` flags overrides standard config discovery;
+  passing one or more `--mise-lock` flags overrides standard lockfile discovery.
+- Later flags take higher precedence than earlier flags.
+- Missing explicit files fail fast with an error.
+
+### Stale / Unconfigured Lockfile Filtering
+
+When one or more active `mise` configuration files are discovered (or supplied
+via `--mise-config`), `trivy-plugin-mise` extracts declared tools from `[tools]`
+and `[tasks.<name>.tools]` and filters discovered lockfiles to those active
+tools:
+
+- Any lockfile tool entry not declared in an active config is **omitted** from
+  both `sbom` and `scan` output (along with its sidecar lockfile directory), and
+  a warning is emitted to `stderr`:
+
+  ```text
+  warning: omitting unconfigured tool `<tool>` from `<lockfile>` (not declared in active mise config)
+  ```
+
+- **Backward compatibility:** Lockfile-only repositories or fixtures with zero
+  `mise` configuration files keep all lockfile entries and sidecar directories
+  without warnings.
 
 ### `mise.lock` Parsing (`lockfile_version = 3` and `4`)
 
-`trivy-plugin-mise` parses `<PATH>/mise.lock` when present. It supports
-`lockfile_version = 3` and `lockfile_version = 4` (returning an error on
-unsupported lockfile versions) and supports both single-table (`[tools.<name>]`)
-and array-of-tables (`[[tools.<name>]]`) tool definitions.
+`trivy-plugin-mise` parses every discovered (or `--mise-lock`-configured)
+lockfile. It supports `lockfile_version = 3` and `lockfile_version = 4`
+(returning an error on unsupported lockfile versions) and supports both
+single-table (`[tools.<name>]`) and array-of-tables (`[[tools.<name>]]`) tool
+definitions.
 
 Each locked tool entry is normalized into a CycloneDX `application` component
 using its effective backend (`tool.backend` when present, or the
@@ -291,21 +385,25 @@ Each normalized `mise.lock` component sets `bom-ref` to its PURL and records
   - Top-level `mise:provenance` is emitted when all provenance-bearing platforms
     on the tool agree on the same provenance type.
 
-### `.mise/locks/<tool>/<version>/` Sidecars & Digest Verification
+### Sidecar Lockfiles (`locks/<tool>/<version>/`) & Digest Verification
 
 When `mise` installs ecosystem-backed tools (such as `npm:` packages locked via
 `aube` or Python tools locked via `uv`), transitive dependency lockfiles can be
-stored under `.mise/locks/<tool>/<version>/`.
+stored in sidecar directories (`.config/mise/locks/<tool>/<version>/`,
+`.mise/locks/<tool>/<version>/`, `mise/locks/<tool>/<version>/`, or a
+lockfile-relative `locks/` directory).
 
 1. **Discovery & Path Validation:**
-   - `trivy-plugin-mise` first reads sidecar references declared on tools in
-     `mise.lock` (e.g.
-     `aube = { path = ".mise/locks/npm-prettier/3.5.3", digest = "sha256:..." }`),
-     and then scans `.mise/locks/<tool>/<version>/` for any additional sidecar
-     directories.
+   - `trivy-plugin-mise` first reads sidecar references declared on active tools
+     in each discovered (or `--mise-lock`) lockfile (resolving relative to that
+     lockfile's directory first, e.g. `locks/npm-prettier/3.10.1` in
+     `.config/mise/mise.lock`, then falling back to the project root, e.g.
+     `.mise/locks/npm-prettier/3.5.3`), and then scans standard sidecar lock
+     directories for any additional active sidecars.
    - All sidecar paths are validated to ensure they remain strictly inside the
-     target project root (rejecting absolute paths, `..` traversal, or symlinks
-     escaping the workspace).
+     base root they resolved under (the target project root, or the explicit
+     lockfile directory for external `--mise-lock` paths), rejecting absolute
+     paths, `..` traversal, or symlinks escaping that root.
 2. **SHA-256 Digest Verification:**
    - When a sidecar entry in `mise.lock` specifies `digest = "sha256:<64-hex>"`,
      `trivy-plugin-mise` computes the SHA-256 digest of the sidecar lockfile
@@ -344,9 +442,11 @@ remaps transitive dependency edges under a `"mise-toolchain"` root reference.
 Use `--mode formulation` when generating the primary SBOM for a repository or
 deliverable product:
 
-1. Runs `trivy fs --format cyclonedx --quiet --skip-dirs .mise/locks <PATH>` to
-   produce the base product SBOM (whose top-level `components[]` contains only
-   shipped runtime/application dependencies).
+1. Runs
+   `trivy fs --format cyclonedx --quiet --skip-dirs <sidecar-locks>... <PATH>`
+   (skipping `.mise/locks`, `.config/mise/locks`, and any other discovered
+   sidecar lock directories) to produce the base product SBOM (whose top-level
+   `components[]` contains only shipped runtime/application dependencies).
 2. Upgrades the document schema to CycloneDX `1.7` and appends a formula entry
    (`"bom-ref": "mise-toolchain"`) to top-level **`formulation[]`** containing:
    - `components`: All normalized `mise.lock` tools and deduplicated transitive
@@ -391,11 +491,11 @@ passed. If any enabled tier detects unaccepted findings, `scan` exits with
 
 ### The Three Scan Tiers
 
-| Tier               | Default State | Underlying Trivy Command                                                    | Scanners                              | Purpose                                                                                                                                                                                                                     |
-| ------------------ | ------------- | --------------------------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1. `repo`**      | **Enabled**   | `trivy fs --scanners <SCANNERS> --skip-dirs .mise/locks <TARGET>`           | `vuln,license` (`--scanners` default) | Scans shipped repository manifests and lockfiles for both CVEs and license policy compliance (customizable via `--scanners`). Skipped when `--toolchain-only` is passed.                                                    |
-| **2. `toolchain`** | **Enabled**   | `trivy fs --scanners vuln <materialized-sidecar-workspace>`                 | `vuln` only                           | Verifies SHA-256 digests, materializes `.mise/locks/` (`aube-lock.yaml` -> `pnpm-lock.yaml`, `uv.lock`, etc.), and scans tool dependencies for CVEs. Skipped if no sidecars exist or `--repo-only` is passed.               |
-| **3. `gobinary`**  | **Opt-in**    | `trivy rootfs --scanners vuln <active-mise-install-path>` (per active tool) | `vuln` only                           | Enabled with `--include-gobinary` (unless `--repo-only` is set). Runs `mise ls --json` in `<TARGET>` and scans every installed, active tool directory (catching Go stdlib/module CVEs compiled into prebuilt CLI binaries). |
+| Tier               | Default State | Underlying Trivy Command                                                    | Scanners                              | Purpose                                                                                                                                                                                                                       |
+| ------------------ | ------------- | --------------------------------------------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1. `repo`**      | **Enabled**   | `trivy fs --scanners <SCANNERS> --skip-dirs <sidecar-locks>... <TARGET>`    | `vuln,license` (`--scanners` default) | Scans shipped repository manifests and lockfiles for both CVEs and license policy compliance (customizable via `--scanners`), skipping all discovered sidecar lock directories (`.config/mise/locks/`, `.mise/locks/`, etc.). |
+| **2. `toolchain`** | **Enabled**   | `trivy fs --scanners vuln <materialized-sidecar-workspace>`                 | `vuln` only                           | Verifies SHA-256 digests, materializes active sidecar lockfiles (`aube-lock.yaml` -> `pnpm-lock.yaml`, `uv.lock`, etc.), and scans tool dependencies for CVEs. Skipped if no active sidecars exist or `--repo-only` is set.   |
+| **3. `gobinary`**  | **Opt-in**    | `trivy rootfs --scanners vuln <active-mise-install-path>` (per active tool) | `vuln` only                           | Enabled with `--include-gobinary` (unless `--repo-only` is set). Runs `mise ls --json` in `<TARGET>` and scans every installed, active tool directory (catching Go stdlib/module CVEs compiled into prebuilt CLI binaries).   |
 
 ### Automatic Discovery of `trivy.yaml`, `.trivyignore.yaml`, and `.trivyignore`
 

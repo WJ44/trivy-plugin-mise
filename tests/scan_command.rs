@@ -97,12 +97,19 @@ fn scan_clean_repository_exits_zero() {
     let repo_idx = stderr
         .find("==> Repository scan (trivy fs --scanners vuln,license):")
         .expect("expected repository tier header in stderr");
+    let toolchain_idx = stderr
+        .find("==> Toolchain sidecar scan (.config/mise/locks/, trivy fs --scanners vuln)")
+        .expect("expected layered .config/mise/locks/ toolchain tier header in stderr");
     let summary_idx = stderr
         .find(
-            "==> Scan summary: repo=clean, toolchain=none, gobinary=skipped -> clean (exit code 0)",
+            "==> Scan summary: repo=clean, toolchain=clean, gobinary=skipped -> clean (exit code 0)",
         )
         .expect("expected scan summary line in stderr");
-    assert!(repo_idx < summary_idx);
+    assert!(repo_idx < toolchain_idx && toolchain_idx < summary_idx);
+    assert!(
+        !stderr.contains("warning: omitting unconfigured tool"),
+        "expected no stale-tool warnings on repository itself:\n{stderr}"
+    );
 }
 
 #[test]
@@ -595,6 +602,241 @@ provenance = { repository = "github.com/example/clean" }
     assert_eq!(vuln_output.status.code(), Some(1));
     let vuln_stderr = String::from_utf8_lossy(&vuln_output.stderr);
     assert!(vuln_stderr.contains(
+        "==> Scan summary: repo=clean, toolchain=findings, gobinary=skipped -> findings detected (exit code 1)"
+    ));
+}
+
+#[test]
+fn scan_skips_config_mise_locks_in_repo_tier_and_scans_them_in_toolchain_tier() {
+    let _guard = lock_trivy();
+    let tmp = TempDir::new().unwrap();
+    let sidecar_dir = tmp.path().join(".config/mise/locks/npm-vuln/1.0.0");
+    fs::create_dir_all(tmp.path().join(".config/mise/conf.d")).unwrap();
+    fs::create_dir_all(&sidecar_dir).unwrap();
+
+    fs::write(tmp.path().join("package-lock.json"), CLEAN_PACKAGE_LOCK).unwrap();
+    fs::write(tmp.path().join(".trivyignore.yaml"), EMPTY_TRIVYIGNORE).unwrap();
+    fs::write(
+        tmp.path().join(".config/mise/conf.d/tools.toml"),
+        "[tools]\n\"npm:vuln\" = \"1.0.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join(".config/mise/mise.lock"),
+        r#"lockfile_version = 3
+
+[[tools."npm:vuln"]]
+version = "1.0.0"
+aube = { path = "locks/npm-vuln/1.0.0" }
+backend = "npm:vuln"
+"#,
+    )
+    .unwrap();
+    fs::write(sidecar_dir.join("package-lock.json"), VULN_PACKAGE_LOCK).unwrap();
+
+    // Tier 1 (--repo-only) must skip `.config/mise/locks/` so it is not scanned as repo deps.
+    let repo_only = bin()
+        .args(["scan", "--repo-only"])
+        .arg(tmp.path())
+        .output()
+        .expect("run --repo-only scan");
+    assert!(
+        repo_only.status.success(),
+        "expected --repo-only to skip .config/mise/locks/, stderr:\n{}",
+        String::from_utf8_lossy(&repo_only.stderr)
+    );
+    assert!(String::from_utf8_lossy(&repo_only.stderr).contains(
+        "==> Scan summary: repo=clean, toolchain=skipped, gobinary=skipped -> clean (exit code 0)"
+    ));
+
+    // Full scan scans `.config/mise/locks/` in Tier 2 (toolchain) and detects the finding.
+    let full = bin()
+        .arg("scan")
+        .arg(tmp.path())
+        .output()
+        .expect("run full scan");
+    assert_eq!(full.status.code(), Some(1));
+    let full_stderr = String::from_utf8_lossy(&full.stderr);
+    assert!(
+        full_stderr
+            .contains("==> Toolchain sidecar scan (.config/mise/locks/, trivy fs --scanners vuln)")
+    );
+    assert!(full_stderr.contains(
+        "==> Scan summary: repo=clean, toolchain=findings, gobinary=skipped -> findings detected (exit code 1)"
+    ));
+}
+
+#[test]
+fn scan_warns_and_omits_stale_lockfile_tool_and_its_vulnerable_sidecar() {
+    let _guard = lock_trivy();
+    let tmp = TempDir::new().unwrap();
+    let stale_sidecar = tmp.path().join(".mise/locks/npm-stale/1.0.0");
+    let active_sidecar = tmp.path().join(".mise/locks/npm-clean/1.0.0");
+    fs::create_dir_all(&stale_sidecar).unwrap();
+    fs::create_dir_all(&active_sidecar).unwrap();
+
+    fs::write(tmp.path().join("package-lock.json"), CLEAN_PACKAGE_LOCK).unwrap();
+    fs::write(tmp.path().join(".trivyignore.yaml"), EMPTY_TRIVYIGNORE).unwrap();
+    fs::write(stale_sidecar.join("package-lock.json"), VULN_PACKAGE_LOCK).unwrap();
+    fs::write(active_sidecar.join("package-lock.json"), CLEAN_PACKAGE_LOCK).unwrap();
+
+    fs::write(
+        tmp.path().join("mise.toml"),
+        "[tools]\n\"npm:clean\" = \"1.0.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("mise.lock"),
+        r#"lockfile_version = 3
+
+[[tools."npm:clean"]]
+version = "1.0.0"
+aube = { path = ".mise/locks/npm-clean/1.0.0" }
+backend = "npm:clean"
+
+[[tools."npm:stale"]]
+version = "1.0.0"
+aube = { path = ".mise/locks/npm-stale/1.0.0" }
+backend = "npm:stale"
+"#,
+    )
+    .unwrap();
+
+    let output = bin()
+        .arg("scan")
+        .arg(tmp.path())
+        .output()
+        .expect("run scan with stale tool");
+    assert!(
+        output.status.success(),
+        "expected stale tool's vulnerable sidecar to be omitted so scan exits 0, stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("warning: omitting unconfigured tool `npm:stale` from `mise.lock`"),
+        "expected warning for omitted stale tool on stderr:\n{stderr}"
+    );
+    assert!(stderr.contains(
+        "==> Scan summary: repo=clean, toolchain=clean, gobinary=skipped -> clean (exit code 0)"
+    ));
+}
+
+#[test]
+fn scan_include_local_and_custom_mise_flags() {
+    let _guard = lock_trivy();
+    let tmp = TempDir::new().unwrap();
+    let local_sidecar = tmp.path().join(".mise/locks/npm-localvuln/1.0.0");
+    let custom_sidecar = tmp.path().join("custom/locks/npm-customvuln/1.0.0");
+    fs::create_dir_all(&local_sidecar).unwrap();
+    fs::create_dir_all(&custom_sidecar).unwrap();
+
+    fs::write(tmp.path().join("package-lock.json"), CLEAN_PACKAGE_LOCK).unwrap();
+    fs::write(tmp.path().join(".trivyignore.yaml"), EMPTY_TRIVYIGNORE).unwrap();
+    fs::write(local_sidecar.join("package-lock.json"), VULN_PACKAGE_LOCK).unwrap();
+    fs::write(custom_sidecar.join("package-lock.json"), VULN_PACKAGE_LOCK).unwrap();
+
+    fs::write(
+        tmp.path().join("mise.toml"),
+        "[tools]\nrust = \"1.100.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("mise.lock"),
+        "lockfile_version = 3\n\n[[tools.rust]]\nversion = \"1.100.0\"\nbackend = \"core:rust\"\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("mise.local.toml"),
+        "[tools]\n\"npm:localvuln\" = \"1.0.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("mise.local.lock"),
+        r#"lockfile_version = 3
+
+[[tools."npm:localvuln"]]
+version = "1.0.0"
+aube = { path = ".mise/locks/npm-localvuln/1.0.0" }
+backend = "npm:localvuln"
+"#,
+    )
+    .unwrap();
+
+    // Without --include-local, local tool & sidecar are excluded; toolchain-only scan exits 0.
+    let without_local = bin()
+        .args(["scan", "--toolchain-only"])
+        .arg(tmp.path())
+        .output()
+        .expect("run scan without --include-local");
+    assert!(
+        without_local.status.success(),
+        "expected local sidecar to be excluded by default, stderr:\n{}",
+        String::from_utf8_lossy(&without_local.stderr)
+    );
+
+    // With --include-local, mise.local.toml + mise.local.lock are included and vulnerable sidecar is caught.
+    let with_local = bin()
+        .args(["scan", "--toolchain-only", "--include-local"])
+        .arg(tmp.path())
+        .output()
+        .expect("run scan with --include-local");
+    assert_eq!(
+        with_local.status.code(),
+        Some(1),
+        "expected --include-local to scan mise.local.lock sidecar and find CVE"
+    );
+
+    // Custom --mise-config and --mise-lock discover custom lockfile + its sidecar, and Tier 1 skips custom/locks.
+    fs::write(
+        tmp.path().join("custom/tools.toml"),
+        "[tools]\n\"npm:customvuln\" = \"1.0.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("custom/custom.lock"),
+        r#"lockfile_version = 3
+
+[[tools."npm:customvuln"]]
+version = "1.0.0"
+aube = { path = "locks/npm-customvuln/1.0.0" }
+backend = "npm:customvuln"
+"#,
+    )
+    .unwrap();
+
+    let custom_repo_only = bin()
+        .args([
+            "scan",
+            "--repo-only",
+            "--mise-config",
+            "custom/tools.toml",
+            "--mise-lock",
+            "custom/custom.lock",
+        ])
+        .arg(tmp.path())
+        .output()
+        .expect("run repo-only scan with custom mise flags");
+    assert!(
+        custom_repo_only.status.success(),
+        "expected Tier 1 repo scan to skip custom/locks, stderr:\n{}",
+        String::from_utf8_lossy(&custom_repo_only.stderr)
+    );
+
+    let custom_full = bin()
+        .args([
+            "scan",
+            "--mise-config",
+            "custom/tools.toml",
+            "--mise-lock",
+            "custom/custom.lock",
+        ])
+        .arg(tmp.path())
+        .output()
+        .expect("run full scan with custom mise flags");
+    assert_eq!(custom_full.status.code(), Some(1));
+    let custom_stderr = String::from_utf8_lossy(&custom_full.stderr);
+    assert!(custom_stderr.contains(
         "==> Scan summary: repo=clean, toolchain=findings, gobinary=skipped -> findings detected (exit code 1)"
     ));
 }
